@@ -551,6 +551,199 @@ class GeminiStairVisionEngine:
             "crm_integration_card": crm_card
         }
 
+    @classmethod
+    def calculate_c3_spec_by_geometry(
+        cls,
+        levels_count: int = 3,
+        front_width_m: float = 1.8,
+        porch_type: str = "1_sided_direct",
+        has_left_flank: bool = False,
+        has_right_flank: bool = False,
+        side_flank_length_m: float = 0.8,
+        landing_area_sqm: float = 1.2,
+        material: str = "Бетонное основание",
+        allow_direct: bool = True,
+        defects: list = None,
+        recommendation: str = None,
+        elapsed_ms: float = 1800.0
+    ) -> Dict[str, Any]:
+        """
+        Pure deterministic C3 factory engineering calculation based on geometry.
+        Can be called by Vision engine or interactive Telegram callback handlers.
+        """
+        import math
+
+        levels_count = max(1, int(levels_count))
+        front_width_m = max(0.5, float(front_width_m))
+        landing_area_sqm = max(0.0, float(landing_area_sqm))
+        side_flank_length_m = max(0.0, float(side_flank_length_m))
+        defects = defects or ["Естественный износ швов и основания"]
+
+        # 1. Overlay units calculation
+        front_units = max(1, math.ceil(front_width_m / 1.21))
+        side_units = max(1, math.ceil(side_flank_length_m / 1.21)) if side_flank_length_m > 0 else 1
+
+        if porch_type == "3_sided_pyramidal" or (has_left_flank and has_right_flank):
+            porch_type = "3_sided_pyramidal"
+            has_left_flank = True
+            has_right_flank = True
+            # Front + 2 flanks + 2 miter cuts (45 deg)
+            overlays_per_level = front_units + (2 * side_units) + 2
+            total_overlays = levels_count * overlays_per_level
+            shape_desc = "трехсторонняя (сход на 3 стороны)"
+            layout_exp = (
+                f"Сход на 3 стороны: фасад {front_width_m} м ({front_units} накл.) + "
+                f"боковины слева и справа ({2 * side_units} накл.) + 2 угловых запила под 45° = "
+                f"{overlays_per_level} накл./уровень. На {levels_count} ур.: {total_overlays} накладок C3"
+            )
+        elif porch_type == "2_sided_corner" or has_left_flank or has_right_flank:
+            porch_type = "2_sided_corner"
+            # Front + 1 flank + 1 miter cut (45 deg)
+            overlays_per_level = front_units + side_units + 1
+            total_overlays = levels_count * overlays_per_level
+            shape_desc = "угловая Г-образная (сход на 2 стороны)"
+            side_str = "слева" if has_left_flank else "справа"
+            layout_exp = (
+                f"Угловое крыльцо: фасад {front_width_m} м ({front_units} накл.) + "
+                f"боковой заход {side_str} ({side_units} накл.) + 1 угловой запил под 45° = "
+                f"{overlays_per_level} накл./уровень. На {levels_count} ур.: {total_overlays} накладок C3"
+            )
+        else:
+            porch_type = "1_sided_direct"
+            overlays_per_level = front_units
+            total_overlays = levels_count * overlays_per_level
+            shape_desc = "прямой марш (сход на 1 сторону)"
+            if front_units > 1:
+                layout_exp = (
+                    f"Ширина марша {front_width_m} м (> 1.21 м): на каждый из {levels_count} уровней "
+                    f"требуется по {front_units} накладки со стыковкой швов. Итого: {total_overlays} накладок C3"
+                )
+            else:
+                layout_exp = (
+                    f"Марш шириной {front_width_m} м (до 1.21 м): по 1 монолитной накладке C3 "
+                    f"на каждый из {levels_count} уровней. Итого: {total_overlays} шт."
+                )
+
+        slabs_exp = (
+            f"Доборные плоские плиты C3 ({landing_area_sqm} м²) для покрытия площадки свыше 380 мм проступи"
+            if landing_area_sqm > 0 else "Площадка не требует доборных плит"
+        )
+
+        steps_count = total_overlays
+        step_model = C3_SPECS["standard_step"]
+        steps_total = steps_count * step_model["retail_price_rub"]
+        steps_cogs = steps_count * step_model["cogs_rub"]
+
+        slabs_cost = int(landing_area_sqm * C3_SPECS["flat_slab"]["retail_price_sqm_rub"])
+        slabs_cogs = int(landing_area_sqm * C3_SPECS["flat_slab"]["cogs_sqm_rub"])
+
+        adhesive_bags = max(2, int((steps_count + landing_area_sqm) / 3))
+        adhesive_cost = adhesive_bags * C3_SPECS["adhesive"]["retail_price_rub"]
+        adhesive_cogs = adhesive_bags * C3_SPECS["adhesive"]["cogs_rub"]
+
+        sealant_tubes = max(1, int(steps_count / 3))
+        sealant_cost = sealant_tubes * C3_SPECS["sealant"]["retail_price_rub"]
+        sealant_cogs = sealant_tubes * C3_SPECS["sealant"]["cogs_rub"]
+
+        hydro_cost = C3_SPECS["hydrophobizer"]["retail_price_rub"]
+        hydro_cogs = C3_SPECS["hydrophobizer"]["cogs_rub"]
+
+        items = [
+            {
+                "name": f"{step_model['name']} (Габбро-диабаз, рельеф Волна R13, форма: {shape_desc})",
+                "quantity": f"{steps_count} шт.",
+                "unit_price": step_model["retail_price_rub"],
+                "total_price": steps_total,
+                "cogs_total": steps_cogs
+            },
+            {
+                "name": f"Плиты C3 для площадки ({landing_area_sqm} м²)",
+                "quantity": f"{landing_area_sqm} м²",
+                "unit_price": C3_SPECS["flat_slab"]["retail_price_sqm_rub"],
+                "total_price": slabs_cost,
+                "cogs_total": slabs_cogs
+            },
+            {
+                "name": C3_SPECS["adhesive"]["name"],
+                "quantity": f"{adhesive_bags} меш.",
+                "unit_price": C3_SPECS["adhesive"]["retail_price_rub"],
+                "total_price": adhesive_cost,
+                "cogs_total": adhesive_cogs
+            },
+            {
+                "name": C3_SPECS["sealant"]["name"],
+                "quantity": f"{sealant_tubes} шт.",
+                "unit_price": C3_SPECS["sealant"]["retail_price_rub"],
+                "total_price": sealant_cost,
+                "cogs_total": sealant_cogs
+            },
+            {
+                "name": C3_SPECS["hydrophobizer"]["name"],
+                "quantity": "1 кан. (5 л)",
+                "unit_price": hydro_cost,
+                "total_price": hydro_cost,
+                "cogs_total": hydro_cogs
+            }
+        ]
+
+        total_retail = steps_total + slabs_cost + adhesive_cost + sealant_cost + hydro_cost
+        total_cogs = steps_cogs + slabs_cogs + adhesive_cogs + sealant_cogs + hydro_cogs
+        gross_profit = total_retail - total_cogs
+        margin_percent = round((gross_profit / total_retail) * 100, 1)
+
+        tile_initial = int(total_retail * 0.70)
+        tco_savings = int(tile_initial * 2.8 - total_retail)
+
+        foundation_eval = {
+            "status": "APPROVED" if allow_direct else "CRITICAL_RECONSTRUCTION",
+            "health_score": 90 if allow_direct else 25,
+            "allow_direct_c3": allow_direct,
+            "warnings": [] if allow_direct else defects,
+            "recommended_action": recommendation or ("Установка накладок C3" if allow_direct else "Монтаж металлокаркаса C3"),
+            "alternative_solution": "Модульный регулируемый металлокаркас C3 на сваях под накладки" if not allow_direct else "Прямой монтаж C3"
+        }
+
+        return {
+            "status": "SUCCESS",
+            "gemini_latency_ms": elapsed_ms,
+            "detected_stairs": {
+                "levels_count": levels_count,
+                "steps_count": steps_count,
+                "width_m": front_width_m,
+                "landing_sqm": landing_area_sqm,
+                "foundation": f"{material} ({shape_desc})",
+                "porch_type": porch_type,
+                "has_left_flank": has_left_flank,
+                "has_right_flank": has_right_flank,
+                "side_flank_length_m": side_flank_length_m,
+                "step_layout_explanation": layout_exp,
+                "slabs_explanation": slabs_exp,
+                "defects": defects,
+                "foundation_assessment": foundation_eval
+            },
+            "engineering_solution": {
+                "product_type": "Монолитные накладки C3 без шва" if allow_direct else "Модульный металлокаркас C3 + накладки",
+                "surface_color": "Габбро-диабаз (Графит)",
+                "relief_pattern": "Волна R13",
+                "spec_items": items,
+                "total_retail_price_rub": total_retail,
+                "total_cogs_rub": total_cogs,
+                "factory_gross_profit_rub": gross_profit,
+                "factory_margin_percent": margin_percent,
+                "tco_savings_10yr_rub": tco_savings
+            },
+            "personalized_outreach_message": f"Расчет входной группы C3 ({steps_count} ст.): {total_retail:,} руб.",
+            "crm_integration_card": {
+                "deal_title": f"C3 Заказ ({steps_count} ст., {shape_desc}, ~{total_retail:,} руб.)",
+                "lead_temperature": "HOT (🔥 Автоматический расчет C3 Vision)",
+                "urgency": "4/4",
+                "estimated_deal_value_rub": total_retail + (0 if allow_direct else 85000),
+                "estimated_factory_gross_profit_rub": gross_profit + (0 if allow_direct else 45000),
+                "factory_margin_pct": f"{margin_percent}%",
+                "recommended_sales_action": "Предложить металлокаркас C3" if not allow_direct else "Согласовать дату монтажа накладок"
+            }
+        }
+
     def _call_gemini_vision(self, base64_img: str, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Optional[Dict[str, Any]]:
         """Live Gemini Multimodal Vision API call with inline image"""
         import requests
@@ -561,38 +754,48 @@ class GeminiStairVisionEngine:
 
         prompt = (
             "Ты — главный инженер-технолог завода монолитных ступеней C3 (ООО «ИННОФОРМА», г. Тверь, c3.ru).\n"
-            "Внимательно изучи присланную фотографию входной группы и проведи детальный инженерный замер:\n\n"
-            "1. ОПРЕДЕЛЕНИЕ МАСШТАБА И РАЗМЕРОВ:\n"
-            "   - Входная дверь — стандартный ориентир ширины (~1.0 - 1.2 м).\n"
-            "   - Оцени реальную ширину марша (width_m) в метрах.\n"
-            "   - Сосчитай количество видимых уровней подъема (levels_count) от уровня земли/брусчатки до двери.\n\n"
-            "2. АНАЛИЗ СЛОЖНОЙ ГЕОМЕТРИИ (УГЛЫ И ТУМБЫ):\n"
-            "   - Проверь, заворачивает ли ступень за угол (is_corner_step). Если ступень огибает угол (например, с диагональным стыком под 45°), зафиксируй это!\n"
-            "   - Проверь наличие боковой гранитной или бетонной тумбы/консоли/парапета (has_side_pedestal).\n\n"
+            "Внимательно изучи присланную фотографию входной группы и проведи безошибочный инженерный замер:\n\n"
+            "1. ТОЧНЫЙ ПОДСЧЕТ УРОВНЕЙ ПОДЪЕМА (ИСКЛЮЧИТЬ ОШИБКУ: не путать 6 и 7!):\n"
+            "   - Считай физические ПОДЪЕМЫ (подступенки / risers) СНИЗУ ВВЕРХ: от земли/отмостки/брусчатки до уровня пола площадки/двери.\n"
+            "   - ВНИМАНИЕ: Верхний подъем, выходящий на площадку перед дверью — это ПОЛНОЦЕННЫЙ УРОВЕНЬ C3, так как передний край площадки ВСЕГДА облицовывается монолитной накладкой C3 с капиносом!\n"
+            "   - Поэтому количество уровней накладок ВСЕГДА равно общему числу подъемов (risers_count).\n"
+            "   - В массиве 'steps_breakdown' обязательно перечисли КАЖДЫЙ подъем от 1 до N с кратким описанием.\n\n"
+            "2. КЛАССИФИКАЦИЯ ФОРМЫ КРЫЛЬЦА И БОКОВЫХ СТУПЕНЕЙ (КРИТИЧНО!):\n"
+            "   - '1_sided_direct': прямой марш (сход только вперед; по бокам глухие стены, косоуры, перила или цоколь).\n"
+            "   - '2_sided_corner': угловое крыльцо (ступень заворачивает за один угол, сход вперед + в одну из сторон со стыком под 45°).\n"
+            "   - '3_sided_pyramidal': трехстороннее крыльцо (сход открыт с 3 сторон: спереди, слева и справа).\n"
+            "   - 'custom_irregular': сложная геометрия (с боковыми гранитными/бетонными тумбами, разноуровневыми площадками).\n"
+            "   - Оцени наличие открытых боковых ступеней: has_left_flank (слева), has_right_flank (справа), примерную длину захода side_flank_length_m.\n\n"
             "3. ПРАВИЛО РАСКРОЯ И РАСЧЕТА МАТЕРИАЛОВ ЗАВОДА C3:\n"
             "   - Стандартная длина монолитной Г-образной накладки C3 — ровно 1210 мм (1.21 м).\n"
-            "   - Если ширина марша больше 1.21 м (например, 1.8 - 2.0 м), то на ОДИН уровень требуется ДВЕ накладки со стыковкой (1210 мм + подрезка со смещением швов).\n"
-            "   - На каждый угловой заворот за угол требуется ДОПОЛНИТЕЛЬНАЯ накладка под угловой рез 45°.\n"
-            "   - Стандартная глубина накладки C3 — 380 мм. Площадка перед дверью имеет глубину больше 380 мм, поэтому для закрытия оставшегося пространства до порога двери обязательно требуются ДОБОРНЫЕ плоские плиты C3!\n"
-            "   - Посчитай точное количество необходимых монолитных накладок C3 (total_c3_step_overlays) и площадь доборных плит (extra_flat_slabs_sqm).\n\n"
+            "   - Если ширина марша больше 1.21 м (например, 1.8 - 2.0 м), то на ОДИН уровень требуется ДВЕ накладки со стыковкой швов.\n"
+            "   - Каждый боковой заход и угловой запил под 45° требует дополнительных накладок.\n"
+            "   - Стандартная глубина накладки C3 — 380 мм. Площадка перед дверью имеет глубину больше 380 мм, поэтому для закрытия оставшегося пространства до порога двери обязательно требуются ДОБОРНЫЕ плоские плиты C3 (extra_flat_slabs_sqm)!\n\n"
             "Ответь СТРОГО в формате валидного JSON:\n"
             "{\n"
-            '  "levels_count": 2,\n'
-            '  "width_m": 1.9,\n'
-            '  "is_corner_step": true,\n'
-            '  "corner_description": "Нижняя ступень заворачивает за левый угол со спилом под 45 градусов",\n'
-            '  "has_side_pedestal": true,\n'
-            '  "pedestal_description": "Справа расположена гранитная тумба в уровень со 2-й ступенью",\n'
-            '  "total_c3_step_overlays": 5,\n'
-            '  "step_layout_explanation": "Ширина марша 1.9 м: на 2 уровня требуется по 2 накладки со стыковкой (4 шт.) плюс 1 накладка на угловой заворот = итого 5 накладок C3",\n'
-            '  "landing_depth_m": 0.9,\n'
+            '  "porch_type": "1_sided_direct",\n'
+            '  "risers_count": 7,\n'
+            '  "steps_breakdown": [\n'
+            '    {"level": 1, "description": "Нижний подъем от отмостки"},\n'
+            '    {"level": 2, "description": "Второй подъем"},\n'
+            '    {"level": 7, "description": "Верхний подъем на площадку перед дверью"}\n'
+            '  ],\n'
+            '  "width_m": 1.8,\n'
+            '  "has_left_flank": false,\n'
+            '  "has_right_flank": false,\n'
+            '  "side_flank_length_m": 0.0,\n'
+            '  "has_side_pedestal": false,\n'
+            '  "pedestal_description": "",\n'
+            '  "total_c3_step_overlays": 14,\n'
+            '  "step_layout_explanation": "Ширина марша 1.8 м: на каждый из 7 уровней требуется по 2 накладки со стыковкой = итого 14 накладок C3",\n'
+            '  "landing_depth_m": 1.0,\n'
             '  "extra_flat_slabs_sqm": 1.2,\n'
-            '  "slabs_explanation": "Для добора глубины площадки свыше 380 мм проступи и облицовки тумбы требуется 1.2 м2 плоских плит C3",\n'
+            '  "slabs_explanation": "Площадь доборных плоских плит C3 для закрытия глубины площадки свыше 380 мм проступи",\n'
             '  "material": "гранит / плитка / бетон",\n'
             '  "allow_direct_c3": true,\n'
-            '  "condition_summary": "Основание лестницы в хорошем состоянии",\n'
-            '  "engineering_recommendation": "Рекомендуется монтаж накладок C3 с герметизацией стыков герметиком C3",\n'
-            '  "defects": ["Швы между плитками подвержены разрушению от циклов замерзания"]\n'
+            '  "condition_summary": "Основание лестницы в удовлетворительном состоянии",\n'
+            '  "engineering_recommendation": "Рекомендуется монтаж накладок C3 с гидроизоляцией стыков",\n'
+            '  "defects": ["Швы между плитками подвержены разрушению от влаги"]\n'
             "}"
         )
 
@@ -625,9 +828,9 @@ class GeminiStairVisionEngine:
                 if r.status_code == 200:
                     raw_content = r.json()["choices"][0]["message"]["content"]
                     parsed_data = json.loads(raw_content)
-                    print(f"[GEMINI VISION] OpenRouter success: overlays={parsed_data.get('total_c3_step_overlays')}, mat={parsed_data.get('material')}")
+                    print(f"[C3 VISION] Engine success: overlays={parsed_data.get('total_c3_step_overlays')}, mat={parsed_data.get('material')}")
             except Exception as e:
-                print(f"[GEMINI VISION] OpenRouter attempt failed: {e}")
+                print(f"[C3 VISION] Primary API attempt failed: {e}")
 
         # 2. Try Google Native Interactions API as fallback if OpenRouter didn't return
         if not parsed_data and google_key:
@@ -686,144 +889,45 @@ class GeminiStairVisionEngine:
                     pass
             return default
 
-        levels_count = _parse_int(parsed_data.get("levels_count"), default=2)
-        total_overlays = _parse_int(parsed_data.get("total_c3_step_overlays"), default=levels_count * 2)
-        steps_count = total_overlays  # Total C3 monolithic overlay units to procure!
-        
-        stair_width_m = _parse_float(parsed_data.get("width_m"), default=1.8)
-        landing_area_sqm = _parse_float(parsed_data.get("extra_flat_slabs_sqm") or parsed_data.get("landing_sqm"), default=1.5)
-        
+        # Determine step count: check risers_count, steps_breakdown, or levels_count
+        raw_risers = parsed_data.get("risers_count")
+        breakdown = parsed_data.get("steps_breakdown")
+        if isinstance(breakdown, list) and len(breakdown) > 0:
+            levels_count = len(breakdown)
+        elif raw_risers is not None:
+            levels_count = _parse_int(raw_risers, default=3)
+        else:
+            levels_count = _parse_int(parsed_data.get("levels_count"), default=3)
+
+        stair_width_m = _parse_float(parsed_data.get("width_m") or parsed_data.get("front_width_m"), default=1.8)
+        porch_type = parsed_data.get("porch_type") or ("2_sided_corner" if parsed_data.get("is_corner_step") else "1_sided_direct")
+        has_left = bool(parsed_data.get("has_left_flank", False))
+        has_right = bool(parsed_data.get("has_right_flank", False))
+        if parsed_data.get("is_corner_step") and not has_left and not has_right:
+            has_left = True
+        side_len = _parse_float(parsed_data.get("side_flank_length_m"), default=0.8 if (has_left or has_right) else 0.0)
+        landing_area_sqm = _parse_float(parsed_data.get("extra_flat_slabs_sqm") or parsed_data.get("landing_sqm"), default=1.2)
+
         detected_mat = parsed_data.get("material") or "Облицованное основание"
-        is_corner = bool(parsed_data.get("is_corner_step", False))
-        corner_desc = parsed_data.get("corner_description", "")
-        has_pedestal = bool(parsed_data.get("has_side_pedestal", False))
-        pedestal_desc = parsed_data.get("pedestal_description", "")
-        step_layout_exp = parsed_data.get("step_layout_explanation", "")
-        slabs_exp = parsed_data.get("slabs_explanation", "")
-        
-        shape = "угловая со скосом" if is_corner else "прямая"
         allow_direct = bool(parsed_data.get("allow_direct_c3", True))
-        defects = parsed_data.get("defects") or ["Несущая способность основания требует проверки"]
-        warnings = parsed_data.get("warnings") or []
-        condition_summary = parsed_data.get("condition_summary") or "Основание лестницы"
-        recommendation = parsed_data.get("engineering_recommendation") or "Установка накладок C3"
-
-        # Calculate materials and prices
-        step_model = C3_SPECS["standard_step"]
-        steps_total = steps_count * step_model["retail_price_rub"]
-        steps_cogs = steps_count * step_model["cogs_rub"]
-
-        slabs_cost = int(landing_area_sqm * C3_SPECS["flat_slab"]["retail_price_sqm_rub"])
-        slabs_cogs = int(landing_area_sqm * C3_SPECS["flat_slab"]["cogs_sqm_rub"])
-
-        adhesive_bags = max(2, int((steps_count + landing_area_sqm) / 3))
-        adhesive_cost = adhesive_bags * C3_SPECS["adhesive"]["retail_price_rub"]
-        adhesive_cogs = adhesive_bags * C3_SPECS["adhesive"]["cogs_rub"]
-
-        sealant_tubes = max(1, int(steps_count / 3))
-        sealant_cost = sealant_tubes * C3_SPECS["sealant"]["retail_price_rub"]
-        sealant_cogs = sealant_tubes * C3_SPECS["sealant"]["cogs_rub"]
-
-        hydro_cost = C3_SPECS["hydrophobizer"]["retail_price_rub"]
-        hydro_cogs = C3_SPECS["hydrophobizer"]["cogs_rub"]
-
-        items = [
-            {
-                "name": f"{step_model['name']} (Габбро-диабаз, рельеф Волна R13, форма: {shape})",
-                "quantity": f"{steps_count} шт.",
-                "unit_price": step_model["retail_price_rub"],
-                "total_price": steps_total,
-                "cogs_total": steps_cogs
-            },
-            {
-                "name": f"Плиты C3 для площадки ({landing_area_sqm} м²)",
-                "quantity": f"{landing_area_sqm} м²",
-                "unit_price": C3_SPECS["flat_slab"]["retail_price_sqm_rub"],
-                "total_price": slabs_cost,
-                "cogs_total": slabs_cogs
-            },
-            {
-                "name": C3_SPECS["adhesive"]["name"],
-                "quantity": f"{adhesive_bags} меш.",
-                "unit_price": C3_SPECS["adhesive"]["retail_price_rub"],
-                "total_price": adhesive_cost,
-                "cogs_total": adhesive_cogs
-            },
-            {
-                "name": C3_SPECS["sealant"]["name"],
-                "quantity": f"{sealant_tubes} шт.",
-                "unit_price": C3_SPECS["sealant"]["retail_price_rub"],
-                "total_price": sealant_cost,
-                "cogs_total": sealant_cogs
-            },
-            {
-                "name": C3_SPECS["hydrophobizer"]["name"],
-                "quantity": "1 кан. (5 л)",
-                "unit_price": hydro_cost,
-                "total_price": hydro_cost,
-                "cogs_total": hydro_cogs
-            }
-        ]
-
-        total_retail = steps_total + slabs_cost + adhesive_cost + sealant_cost + hydro_cost
-        total_cogs = steps_cogs + slabs_cogs + adhesive_cogs + sealant_cogs + hydro_cogs
-        gross_profit = total_retail - total_cogs
-        margin_percent = round((gross_profit / total_retail) * 100, 1)
-
-        tile_initial = int(total_retail * 0.70)
-        tco_savings = int(tile_initial * 2.8 - total_retail)
-
-        foundation_eval = {
-            "status": "APPROVED" if allow_direct else "CRITICAL_RECONSTRUCTION",
-            "health_score": 90 if allow_direct else 25,
-            "allow_direct_c3": allow_direct,
-            "warnings": warnings if warnings else (defects if not allow_direct else []),
-            "recommended_action": recommendation,
-            "alternative_solution": "Модульный регулируемый металлокаркас C3 на сваях под накладки" if not allow_direct else "Прямой монтаж C3"
-        }
-
+        defects = parsed_data.get("defects") or ["Естественный износ основания и межплиточных швов"]
+        recommendation = parsed_data.get("engineering_recommendation")
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
-        return {
-            "status": "SUCCESS",
-            "gemini_latency_ms": elapsed_ms,
-            "detected_stairs": {
-                "levels_count": levels_count,
-                "steps_count": steps_count,
-                "width_m": stair_width_m,
-                "landing_sqm": landing_area_sqm,
-                "foundation": f"{detected_mat} ({shape})",
-                "is_corner_step": is_corner,
-                "corner_description": corner_desc,
-                "has_side_pedestal": has_pedestal,
-                "pedestal_description": pedestal_desc,
-                "step_layout_explanation": step_layout_exp,
-                "slabs_explanation": slabs_exp,
-                "defects": defects,
-                "foundation_assessment": foundation_eval
-            },
-            "engineering_solution": {
-                "product_type": "Монолитные накладки C3 без шва" if allow_direct else "Модульный металлокаркас C3 + накладки",
-                "surface_color": "Габбро-диабаз (Графит)",
-                "relief_pattern": "Волна R13",
-                "spec_items": items,
-                "total_retail_price_rub": total_retail,
-                "total_cogs_rub": total_cogs,
-                "factory_gross_profit_rub": gross_profit,
-                "factory_margin_percent": margin_percent,
-                "tco_savings_10yr_rub": tco_savings
-            },
-            "personalized_outreach_message": f"Расчет входной группы C3 ({steps_count} ст.): {total_retail:,} руб.",
-            "crm_integration_card": {
-                "deal_title": f"C3 Заказ по фото ({steps_count} ст., {shape}, ~{total_retail:,} руб.)",
-                "lead_temperature": "HOT (🔥 Точный расчет Gemini Vision)",
-                "urgency": "4/4",
-                "estimated_deal_value_rub": total_retail + (0 if allow_direct else 85000),
-                "estimated_factory_gross_profit_rub": gross_profit + (0 if allow_direct else 45000),
-                "factory_margin_pct": f"{margin_percent}%",
-                "recommended_sales_action": "Предложить металлокаркас C3" if not allow_direct else "Согласовать дату монтажа накладок"
-            }
-        }
+        return self.calculate_c3_spec_by_geometry(
+            levels_count=levels_count,
+            front_width_m=stair_width_m,
+            porch_type=porch_type,
+            has_left_flank=has_left,
+            has_right_flank=has_right,
+            side_flank_length_m=side_len,
+            landing_area_sqm=landing_area_sqm,
+            material=detected_mat,
+            allow_direct=allow_direct,
+            defects=defects,
+            recommendation=recommendation,
+            elapsed_ms=elapsed_ms
+        )
 
     def _generate_c3_engineering_solution(self, input_data: Dict[str, Any], preset_id: str, text: str, segment: str, urgency: int, start_time: float) -> Dict[str, Any]:
         """

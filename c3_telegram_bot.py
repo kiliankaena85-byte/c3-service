@@ -159,9 +159,117 @@ async def handle_user_location(message: types.Message):
     await message.answer(reply, parse_mode="Markdown", reply_markup=kb)
 
 
+def make_c3_keyboard(current_steps: int, current_porch: str, has_logistics: bool) -> InlineKeyboardMarkup:
+    # Row 1: Step correction buttons
+    steps_row = []
+    for s in [4, 5, 6, 7, 8, 9]:
+        prefix = "✅ " if s == current_steps else ""
+        steps_row.append(InlineKeyboardButton(text=f"{prefix}{s} ст.", callback_data=f"set_steps_{s}"))
+
+    # Row 2: Porch shape buttons
+    b1_check = "✅ " if current_porch == "1_sided_direct" else ""
+    b2_check = "✅ " if current_porch == "2_sided_corner" else ""
+    b3_check = "✅ " if current_porch == "3_sided_pyramidal" else ""
+    shape_row = [
+        InlineKeyboardButton(text=f"{b1_check}Прямое", callback_data="set_shape_1_sided_direct"),
+        InlineKeyboardButton(text=f"{b2_check}Угловое", callback_data="set_shape_2_sided_corner"),
+        InlineKeyboardButton(text=f"{b3_check}На 3 стороны", callback_data="set_shape_3_sided_pyramidal")
+    ]
+
+    action_rows = []
+    if not has_logistics:
+        action_rows.append([InlineKeyboardButton(text="📍 Рассчитать доставку в мой город", callback_data="ask_location")])
+    action_rows.append([InlineKeyboardButton(text="📞 Заказать бесплатный замер", callback_data="order_measure")])
+    action_rows.append([
+        InlineKeyboardButton(text="📄 Каталог C3 (PDF)", url="https://c3.ru/catalog/"),
+        InlineKeyboardButton(text="💬 Инженер завода", url="https://t.me/c3_support_bot")
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=[steps_row, shape_row] + action_rows)
+
+
+def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> tuple:
+    stairs = calculation["detected_stairs"]
+    sol = calculation["engineering_solution"]
+    found_eval = stairs.get("foundation_assessment", {})
+    allow_direct = found_eval.get("allow_direct_c3", True)
+    levels = stairs.get("levels_count", 3)
+    porch_type = stairs.get("porch_type", "1_sided_direct")
+
+    logistics_section = ""
+    if log_info:
+        logistics_section = (
+            f"\n🚚 **Доставка и сервис ({log_info['city']}):**\n"
+            f"• Расстояние от завода (г. {log_info['factory_city']}): ~{log_info['distance_from_factory_km']} км\n"
+            f"• Доставка: ~{log_info['delivery_cost_rub']:,} руб. ({log_info['delivery_days']})\n"
+            f"• Монтаж: {log_info['brigades_count']}\n"
+        ).replace(",", " ")
+
+    if not allow_direct:
+        warnings_str = "\n".join([f"⚠️ {str(w).replace('_', ' ')}" for w in found_eval.get("warnings", [])])
+        reply_text = (
+            f"🚨 **ВНИМАНИЕ: ОБНАРУЖЕНЫ КРИТИЧЕСКИЕ ДЕФЕКТЫ ОСНОВАНИЯ**\n\n"
+            f"📊 **Техническое заключение:**\n"
+            f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
+            f"• Тип конструкции: {stairs['foundation']}\n"
+            f"• Состояние основания: **{found_eval.get('status', 'Аварийное')}**\n\n"
+            f"🛑 **Выявленные дефекты:**\n"
+            f"{warnings_str}\n\n"
+            f"⛔ **ПРЯМОЙ МОНТАЖ НАКЛАДОК C3 ЗАПРЕЩЕН РЕГЛАМЕНТОМ ЗАВОДА.**\n"
+            f"Основание потеряло несущую способность или имеет подвижность.\n\n"
+            f"🛠 **Заводское решение ООО «ИННОФОРМА» (c3.ru):**\n"
+            f"1️⃣ **Модульный регулируемый металлокаркас C3** на винтовых сваях или опорах (1 рабочий день без мокрых работ, гарантия 20 лет).\n"
+            f"2️⃣ **Капитальный демонтаж и бетонирование новой подушки** силами сертифицированной бригады C3.\n"
+            f"{logistics_section}\n"
+            f"👨‍💼 *Рекомендуем заказать бесплатный инструментальный выезд инженера.*"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏗 Рассчитать металлокаркас C3", callback_data="order_metal_frame")],
+            [InlineKeyboardButton(text="👷 Заказать экспертизу основания", callback_data="order_measure")],
+            [InlineKeyboardButton(text="💬 Консультация главного инженера", url="https://t.me/c3_support_bot")]
+        ])
+        return reply_text, keyboard
+
+    rec_act = str(found_eval.get('recommended_action', '')).replace('_', ' ')
+    prep_note = f"\n⚠️ **Подготовка:** {rec_act}\n" if found_eval.get("status") == "NEEDS_PREPARATION" else ""
+    defect_str = str(stairs['defects'][0]).replace('_', ' ') if stairs.get('defects') else "Естественный износ"
+
+    levels_str = f"• Подъемов (ступеней): **{levels} шт.** (ширина марша ~{stairs['width_m']} м)\n"
+    layout_str = f"\n📐 **Инженерный раскрой завода C3:**\n• {str(stairs.get('step_layout_explanation', '')).replace('_', ' ')}\n" if stairs.get('step_layout_explanation') else ""
+    slabs_str = f"• {str(stairs.get('slabs_explanation', '')).replace('_', ' ')}\n" if stairs.get('slabs_explanation') else ""
+
+    reply_text = (
+        f"✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**\n"
+        f"⏱ *Время экспресс-расчета: {round(calculation.get('gemini_latency_ms', 1200)/1000, 1)} сек*\n\n"
+        f"📊 **Диагностика геометрии:**\n"
+        f"{levels_str}"
+        f"• Всего монолитных накладок C3 (1210 мм): **{stairs['steps_count']} шт.**\n"
+        f"• Доборные плиты покрытия: **{stairs['landing_sqm']} м²**\n"
+        f"• Конструкция: {stairs['foundation']}\n"
+        f"• Дефект основания: {defect_str}\n"
+        f"{layout_str}"
+        f"{slabs_str}"
+        f"{prep_note}\n"
+        f"🛠 **Заводской комплект C3:**\n"
+        f"• Монолитные Г-образные накладки М1200 / F500 (без шва на ребре)\n"
+        f"• Противоскользящий рельеф R13 (безопасно в мороз и лед)\n"
+        f"• Фирменный безусадочный клей + шовный герметик + гидрофобизатор\n\n"
+        f"💰 **Предварительная смета материалов:**\n"
+        f"👉 **{sol['total_retail_price_rub']:,} руб.**\n"
+        f"{logistics_section}\n"
+        f"🛡 **Экономия за 10 лет (TCO):**\n"
+        f"Плитка перекладывается 3 раза за 10 лет. Накладки C3 служат более 20 лет без ремонта.\n"
+        f"Ваша чистая выгода: **+{sol['tco_savings_10yr_rub']:,} руб.**\n\n"
+        f"👇 *Если на фото неверно распознано число ступеней или форма крыльца, выберите нужные параметры кнопками ниже:*"
+    ).replace(",", " ")
+
+    keyboard = make_c3_keyboard(levels, porch_type, bool(log_info))
+    return reply_text, keyboard
+
+
 @dp.message(F.photo)
 async def handle_stair_photo(message: types.Message, bot: Bot):
-    status_msg = await message.answer("⏳ *Сканирую фото: LAYA анализирует объект...*", parse_mode="Markdown")
+    status_msg = await message.answer("⏳ *Сканирую фото: AI-инженер C3 анализирует объект...*", parse_mode="Markdown")
     user_id = message.from_user.id
     
     try:
@@ -172,7 +280,7 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         file_bytes = file_io.getvalue()
         b64_image = base64.b64encode(file_bytes).decode("utf-8")
 
-        # 2. Run LAYA System 1 Decision Triage
+        # 2. Decision Triage
         caption = message.caption or ""
         author = message.from_user.full_name or "Пользователь"
         
@@ -180,22 +288,21 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
             "image_base64": b64_image,
             "text": caption
         })
-        laya_decision = triage["laya_decision"]
-        laya_lat = triage["latency_ms"]
+        decision = triage["laya_decision"]
 
         # If spam or non-stair photo
-        if laya_decision["is_spam"] or not laya_decision["is_stair_inquiry"]:
+        if decision["is_spam"] or not decision["is_stair_inquiry"]:
             await status_msg.edit_text(
-                "⚠️ **Система LAYA определила, что на фото нет уличной лестницы.**\n\n"
-                "Пожалуйста, сделайте фото входной группы или ступеней вашего дома/магазина и отправьте снова!",
+                "⚠️ **На фотографии не обнаружена уличная лестница или крыльцо.**\n\n"
+                "Пожалуйста, сделайте четкое фото входной группы или ступеней вашего дома/магазина и отправьте снова!",
                 parse_mode="Markdown"
             )
             return
 
-        # 3. Run Multimodal Reasoning & Geometry Detection
+        # 3. Multimodal Reasoning & Geometry Detection
         await status_msg.edit_text(
-            f"⚡ *LAYA классифицировала объект за {laya_lat} ms!*\n"
-            f"🔍 *Компьютерное зрение рассчитывает геометрию ступеней и смету C3...*",
+            "⚡ *Входная группа распознана!*\n"
+            "🔍 *AI-система рассчитывает геометрию ступеней, раскрой и смету завода C3...*",
             parse_mode="Markdown"
         )
 
@@ -206,8 +313,7 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         }, triage)
 
         stairs = calculation["detected_stairs"]
-        sol = calculation["engineering_solution"]
-        gemini_lat = calculation["gemini_latency_ms"]
+        found_eval = stairs.get("foundation_assessment", {})
 
         # Check regional logistics (from user session or caption)
         session = user_sessions.get(user_id, {})
@@ -216,94 +322,25 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
             log_info = C3RegionalLogistics.resolve_by_text(caption)
             if log_info:
                 session["logistics"] = log_info
-                user_sessions[user_id] = session
 
-        # Save calculation to session
+        # Save calculation and state to session for instant interactive recalculation
         session["last_calc"] = calculation
+        session["current_calc_state"] = {
+            "levels_count": stairs.get("levels_count", 3),
+            "width_m": stairs.get("width_m", 1.8),
+            "porch_type": stairs.get("porch_type", "1_sided_direct"),
+            "has_left_flank": stairs.get("has_left_flank", False),
+            "has_right_flank": stairs.get("has_right_flank", False),
+            "side_flank_length_m": stairs.get("side_flank_length_m", 0.8),
+            "landing_sqm": stairs.get("landing_sqm", 1.2),
+            "material": stairs.get("foundation", "Бетонное основание"),
+            "allow_direct": found_eval.get("allow_direct_c3", True),
+            "defects": stairs.get("defects", []),
+            "recommended_action": found_eval.get("recommended_action", "")
+        }
         user_sessions[user_id] = session
 
-        # Format Response Message
-        logistics_section = ""
-        if log_info:
-            logistics_section = (
-                f"\n🚚 **Доставка и сервис ({log_info['city']}):**\n"
-                f"• Расстояние от завода (г. {log_info['factory_city']}): ~{log_info['distance_from_factory_km']} км\n"
-                f"• Доставка: ~{log_info['delivery_cost_rub']:,} руб. ({log_info['delivery_days']})\n"
-                f"• Монтаж: {log_info['brigades_count']}\n"
-            ).replace(",", " ")
-
-        found_eval = stairs.get("foundation_assessment", {})
-        allow_direct = found_eval.get("allow_direct_c3", True)
-
-        if not allow_direct:
-            warnings_str = "\n".join([f"⚠️ {str(w).replace('_', ' ')}" for w in found_eval.get("warnings", [])])
-            reply_text = (
-                f"🚨 **ВНИМАНИЕ: ОБНАРУЖЕНЫ КРИТИЧЕСКИЕ ДЕФЕКТЫ ОСНОВАНИЯ**\n"
-                f"⏱ *Экспресс-диагностика: Laya {laya_lat} ms + Vision {gemini_lat} ms*\n\n"
-                f"📊 **Техническое заключение:**\n"
-                f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
-                f"• Тип конструкции: {stairs['foundation']}\n"
-                f"• Состояние основания: **{found_eval.get('status', 'Аварийное')}** (Надежность: {found_eval.get('health_score', 25)}%)\n\n"
-                f"🛑 **Выявленные дефекты:**\n"
-                f"{warnings_str}\n\n"
-                f"⛔ **ПРЯМОЙ МОНТАЖ НАКЛАДОК C3 ЗАПРЕЩЕН РЕГЛАМЕНТОМ ЗАВОДА.**\n"
-                f"Основание потеряло несущую способность или имеет подвижность. Если наклеить монолитный фибробетон C3 на такую основу, "
-                f"накладки оторвутся или треснут вместе со ступенями при первых морозах.\n\n"
-                f"🛠 **Заводское решение ООО «ИННОФОРМА» (c3.ru):**\n"
-                f"1️⃣ **Модульный регулируемый металлокаркас C3** на винтовых сваях или регулируемых опорах. "
-                f"Монтируется за 1 рабочий день без мокрых работ и усадки бетона. На него сразу устанавливаются накладки C3 с гарантией 20 лет!\n"
-                f"2️⃣ **Капитальный демонтаж и бетонирование новой подушки** силами аккредитованной бригады C3.\n"
-                f"{logistics_section}\n"
-                f"👨‍💼 *Рекомендуем заказать бесплатный инструментальный выезд инженера со склерометром для проверки прочности бетона.*"
-            )
-            buttons = [
-                [InlineKeyboardButton(text="🏗 Рассчитать металлокаркас C3", callback_data="order_metal_frame")],
-                [InlineKeyboardButton(text="👷 Заказать экспертизу основания", callback_data="order_measure")],
-                [InlineKeyboardButton(text="💬 Консультация главного инженера", url="https://t.me/c3_support_bot")]
-            ]
-        else:
-            rec_act = str(found_eval.get('recommended_action', '')).replace('_', ' ')
-            prep_note = f"\n⚠️ **Подготовка:** {rec_act}\n" if found_eval.get("status") == "NEEDS_PREPARATION" else ""
-            defect_str = str(stairs['defects'][0]).replace('_', ' ') if stairs.get('defects') else "Естественный износ"
-            
-            levels_str = f"• Уровней подъема: **{stairs.get('levels_count', 2)}** (ширина марша ~{stairs['width_m']} м)\n" if stairs.get('levels_count') else f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
-            layout_str = f"\n📐 **Инженерный раскрой завода C3:**\n• {str(stairs.get('step_layout_explanation', '')).replace('_', ' ')}\n" if stairs.get('step_layout_explanation') else ""
-            slabs_str = f"• {str(stairs.get('slabs_explanation', '')).replace('_', ' ')}\n" if stairs.get('slabs_explanation') else ""
-
-            reply_text = (
-                f"✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**\n"
-                f"⏱ *Скорость анализа: Laya {laya_lat} ms + Vision {gemini_lat} ms*\n\n"
-                f"📊 **Диагностика геометрии:**\n"
-                f"{levels_str}"
-                f"• Всего накладок C3 (1210 мм): **{stairs['steps_count']} шт.**\n"
-                f"• Доборные плиты покрытия: **{stairs['landing_sqm']} м²**\n"
-                f"• Основание: {stairs['foundation']}\n"
-                f"• Дефект: {defect_str}\n"
-                f"{layout_str}"
-                f"{slabs_str}"
-                f"{prep_note}\n"
-                f"🛠 **Рекомендуемый заводской комплект C3:**\n"
-                f"• Монолитные Г-образные накладки М1200 / F500 (без шва на ребре)\n"
-                f"• Противоскользящий рельеф R13 (не скользит в мороз и дождь)\n"
-                f"• Фирменный безусадочный клей + шовный герметик + гидрофобизатор\n\n"
-                f"💰 **Предварительная смета материалов:**\n"
-                f"👉 **{sol['total_retail_price_rub']:,} руб.**\n"
-                f"{logistics_section}\n"
-                f"🛡 **Экономия за 10 лет (TCO):**\n"
-                f"Обычная плитка перекладывается 3 раза за 10 лет. Накладки C3 служат более 20 лет без ремонта.\n"
-                f"Ваша чистая выгода: **+{sol['tco_savings_10yr_rub']:,} руб.**\n\n"
-                f"За вами зафиксирована заводская гарантия 20 лет!"
-            ).replace(",", " ")
-
-            buttons = [
-                [InlineKeyboardButton(text="📞 Заказать бесплатный замер", callback_data="order_measure")],
-                [InlineKeyboardButton(text="📄 Скачать чертежи и каталог C3", url="https://c3.ru/catalog/")],
-                [InlineKeyboardButton(text="💬 Написать инженеру завода", url="https://t.me/c3_support_bot")]
-            ]
-            if not log_info:
-                buttons.insert(0, [InlineKeyboardButton(text="📍 Рассчитать с доставкой в мой город", callback_data="ask_location")])
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+        reply_text, keyboard = format_c3_calculation_message(calculation, log_info)
 
         try:
             await status_msg.delete()
@@ -319,6 +356,93 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         except Exception:
             pass
         await message.reply(f"❌ Извините, не удалось сформировать смету: {e}\nПожалуйста, отправьте фото еще раз или напишите параметры текстом.")
+
+
+@dp.callback_query(F.data.startswith("set_steps_"))
+async def cb_set_steps(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_steps = int(callback.data.split("_")[-1])
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Отправьте фото лестницы для расчета.")
+        return
+
+    calc_state["levels_count"] = new_steps
+    updated_calc = GeminiStairVisionEngine.calculate_c3_spec_by_geometry(
+        levels_count=new_steps,
+        front_width_m=calc_state.get("width_m", 1.8),
+        porch_type=calc_state.get("porch_type", "1_sided_direct"),
+        has_left_flank=calc_state.get("has_left_flank", False),
+        has_right_flank=calc_state.get("has_right_flank", False),
+        side_flank_length_m=calc_state.get("side_flank_length_m", 0.8),
+        landing_area_sqm=calc_state.get("landing_sqm", 1.2),
+        material=calc_state.get("material", "Бетонное основание"),
+        allow_direct=calc_state.get("allow_direct", True),
+        defects=calc_state.get("defects", []),
+        recommendation=calc_state.get("recommended_action")
+    )
+    session["current_calc_state"] = calc_state
+    session["last_calc"] = updated_calc
+    user_sessions[user_id] = session
+
+    new_text, new_kb = format_c3_calculation_message(updated_calc, session.get("logistics"))
+    try:
+        await callback.message.edit_text(new_text, reply_markup=new_kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer(f"✅ Пересчитано на {new_steps} ступеней!")
+
+
+@dp.callback_query(F.data.startswith("set_shape_"))
+async def cb_set_shape(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_shape = callback.data.replace("set_shape_", "")
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Отправьте фото лестницы для расчета.")
+        return
+
+    calc_state["porch_type"] = new_shape
+    if new_shape == "3_sided_pyramidal":
+        calc_state["has_left_flank"] = True
+        calc_state["has_right_flank"] = True
+    elif new_shape == "2_sided_corner":
+        calc_state["has_left_flank"] = True
+        calc_state["has_right_flank"] = False
+    else:
+        calc_state["has_left_flank"] = False
+        calc_state["has_right_flank"] = False
+
+    updated_calc = GeminiStairVisionEngine.calculate_c3_spec_by_geometry(
+        levels_count=calc_state.get("levels_count", 3),
+        front_width_m=calc_state.get("width_m", 1.8),
+        porch_type=new_shape,
+        has_left_flank=calc_state.get("has_left_flank", False),
+        has_right_flank=calc_state.get("has_right_flank", False),
+        side_flank_length_m=calc_state.get("side_flank_length_m", 0.8),
+        landing_area_sqm=calc_state.get("landing_sqm", 1.2),
+        material=calc_state.get("material", "Бетонное основание"),
+        allow_direct=calc_state.get("allow_direct", True),
+        defects=calc_state.get("defects", []),
+        recommendation=calc_state.get("recommended_action")
+    )
+    session["current_calc_state"] = calc_state
+    session["last_calc"] = updated_calc
+    user_sessions[user_id] = session
+
+    new_text, new_kb = format_c3_calculation_message(updated_calc, session.get("logistics"))
+    try:
+        await callback.message.edit_text(new_text, reply_markup=new_kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    shape_labels = {
+        "1_sided_direct": "Прямое крыльцо",
+        "2_sided_corner": "Угловое крыльцо",
+        "3_sided_pyramidal": "Сход на 3 стороны"
+    }
+    await callback.answer(f"✅ Выбрано: {shape_labels.get(new_shape, new_shape)}")
 
 
 @dp.callback_query(F.data == "ask_location")
