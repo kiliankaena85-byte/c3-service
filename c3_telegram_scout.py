@@ -29,9 +29,18 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
 
 load_dotenv()
 
+import random
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import User
+from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.errors import (
+    UserAlreadyParticipantError,
+    FloodWaitError,
+    ChannelsTooMuchError,
+    InviteHashExpiredError
+)
 from lead_categories import classify_message, CATEGORIES
 from generate_authentic_copy import generate_authentic_copy
 from c3_humanity_detector import LayaHumanityClassifier
@@ -51,6 +60,63 @@ SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
 supabase_sync = SupabaseSync()
 processed_msgs = set()
+
+TARGETS_FILE = os.path.join(os.path.dirname(__file__), "tver_target_chats.txt")
+JOINED_FILE = os.path.join(os.path.dirname(__file__), "joined_chats.txt")
+
+def load_joined_set():
+    if not os.path.exists(JOINED_FILE):
+        return set()
+    with open(JOINED_FILE, "r", encoding="utf-8") as f:
+        return {l.strip().lower() for l in f if l.strip() and not l.startswith("#")}
+
+def record_joined_chat(target: str):
+    with open(JOINED_FILE, "a", encoding="utf-8") as f:
+        f.write(f"{target.strip().lower()}\n")
+
+def load_pending_chats():
+    if not os.path.exists(TARGETS_FILE):
+        return []
+    joined = load_joined_set()
+    pending = []
+    with open(TARGETS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            clean = line.strip()
+            if clean and not clean.startswith("#"):
+                item = clean.split("#")[0].strip()
+                if item and item.lower() not in joined:
+                    pending.append(item)
+    return pending
+
+async def safe_join_single_target(client: TelegramClient, target: str):
+    target = target.strip()
+    invite_match = re.search(r'(?:t\.me\/(?:\+|joinchat\/))([a-zA-Z0-9_-]+)', target)
+    if invite_match:
+        invite_hash = invite_match.group(1)
+        try:
+            await client(ImportChatInviteRequest(invite_hash))
+            record_joined_chat(target)
+            return True, target
+        except UserAlreadyParticipantError:
+            record_joined_chat(target)
+            return True, f"{target} (уже в чате)"
+        except Exception as e:
+            record_joined_chat(target)
+            return False, str(e)
+
+    clean_username = re.sub(r'https?:\/\/t\.me\/|@', '', target).strip('/')
+    try:
+        entity = await client.get_entity(clean_username)
+        await client(JoinChannelRequest(entity))
+        title = getattr(entity, 'title', clean_username)
+        record_joined_chat(target)
+        return True, f"«{title}» (@{clean_username})"
+    except UserAlreadyParticipantError:
+        record_joined_chat(target)
+        return True, f"@{clean_username} (уже в чате)"
+    except Exception as e:
+        record_joined_chat(target)
+        return False, str(e)
 
 def get_message_link(chat, message) -> str:
     try:
@@ -124,7 +190,7 @@ async def start_scout():
         @client.on(events.NewMessage)
         async def handler(event):
             try:
-                # Handle interactive feedback in Saved Messages ('me')
+                # Handle interactive commands & feedback in Saved Messages ('me')
                 if event.chat_id == me.id:
                     if event.is_reply:
                         try:
@@ -144,6 +210,76 @@ async def start_scout():
                                         await event.reply(f"🛑 Лид `{lead_prefix}` отклонен ({reason}). Добавлены минус-токены в Supabase.")
                         except Exception as fe:
                             logger.error(f"Ошибка обработки обратной связи: {fe}")
+                        return
+
+                    # Handle control commands
+                    user_cmd = (event.message.message or "").strip().lower()
+
+                    if user_cmd.startswith(("/status", "статус", "инфо")):
+                        joined_list = load_joined_set()
+                        pending_list = load_pending_chats()
+                        metrics = supabase_sync.get_summary_metrics()
+                        msg = (
+                            "📊 **Статус Облачного Скаута (Render 24/7):**\n\n"
+                            f"✅ **Подключено чатов:** `{len(joined_list)}`\n"
+                            f"📋 **В очереди на подключение:** `{len(pending_list)}`\n"
+                            f"📡 **Активных категорий:** `10`\n"
+                            f"🔑 **Ключевых слов в Supabase:** `{metrics.get('active_keywords', 0)}`\n"
+                            f"🛑 **Минус-слов в Supabase:** `{metrics.get('active_negatives', 0)}`\n\n"
+                            "💡 *Команды:*\n"
+                            "• `/join 3` — безопасно подключить следующие 3 чата из очереди\n"
+                            "• `/status` — показать текущий отчет"
+                        )
+                        await event.reply(msg)
+                        return
+
+                    if user_cmd.startswith(("/join", "подключи", "вступи")):
+                        parts = user_cmd.split()
+                        count = 3
+                        if len(parts) > 1 and parts[1].isdigit():
+                            count = min(int(parts[1]), 5)
+
+                        pending_list = load_pending_chats()
+                        if not pending_list:
+                            await event.reply("🎉 Все целевые чаты из базы уже подключены к вашему аккаунту!")
+                            return
+
+                        batch = pending_list[:count]
+                        await event.reply(
+                            f"🚀 Запускаю безопасное подключение {len(batch)} чатов напрямую из облака Render.\n"
+                            "Паузы между подписками: 60–85 сек (защита от спам-фильтра Telegram)..."
+                        )
+
+                        async def _do_batch_join():
+                            success_count = 0
+                            for i, target in enumerate(batch, 1):
+                                ok, detail = await safe_join_single_target(client, target)
+                                if ok:
+                                    success_count += 1
+                                    await client.send_message('me', f"✅ [{i}/{len(batch)}] Подключен: {detail}")
+                                    try:
+                                        clean_u = re.sub(r'https?:\/\/t\.me\/|@', '', target).strip('/')
+                                        supabase_sync.update_channel_stats(clean_u, detail, scanned_inc=0)
+                                    except Exception:
+                                        pass
+                                else:
+                                    await client.send_message('me', f"⚠️ [{i}/{len(batch)}] Пропущен {target}: {detail}")
+
+                                if i < len(batch):
+                                    delay = random.randint(60, 85)
+                                    await asyncio.sleep(delay)
+
+                            rem = len(load_pending_chats())
+                            await client.send_message(
+                                'me',
+                                f"🎉 **Сессия подключения завершена!**\n"
+                                f"Успешно: `{success_count}/{len(batch)}` | Осталось в очереди: `{rem}` чатов.\n"
+                                "Для следующей пачки отправьте `/join 3`."
+                            )
+
+                        asyncio.create_task(_do_batch_join())
+                        return
+
                     return
 
                 ALLOW_SELF_TEST = os.getenv("ALLOW_SELF_TEST", "true").lower() == "true"
