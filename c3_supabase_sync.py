@@ -13,6 +13,9 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
 load_dotenv()
+_local_env = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_local_env):
+    load_dotenv(_local_env, override=False)
 
 logger = logging.getLogger("SupabaseSync")
 
