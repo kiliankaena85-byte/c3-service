@@ -62,6 +62,15 @@ def get_main_reply_keyboard():
     )
 
 
+async def safe_send_markdown(message: types.Message, text: str, reply_markup=None):
+    try:
+        return await message.reply(text, parse_mode="Markdown", reply_markup=reply_markup)
+    except Exception as parse_err:
+        logging.warning(f"Markdown send failed ({parse_err}), falling back to plain text...")
+        clean = text.replace("**", "").replace("*", "").replace("_", "").replace("`", "")
+        return await message.reply(clean, reply_markup=reply_markup)
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, command: CommandObject):
     args = (command.args or "").strip().lower()
@@ -227,7 +236,7 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         allow_direct = found_eval.get("allow_direct_c3", True)
 
         if not allow_direct:
-            warnings_str = "\n".join([f"⚠️ _{w}_" for w in found_eval.get("warnings", [])])
+            warnings_str = "\n".join([f"⚠️ {str(w).replace('_', ' ')}" for w in found_eval.get("warnings", [])])
             reply_text = (
                 f"🚨 **ВНИМАНИЕ: ОБНАРУЖЕНЫ КРИТИЧЕСКИЕ ДЕФЕКТЫ ОСНОВАНИЯ**\n"
                 f"⏱ *Экспресс-диагностика: Laya {laya_lat} ms + Vision {gemini_lat} ms*\n\n"
@@ -253,7 +262,9 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
                 [InlineKeyboardButton(text="💬 Консультация главного инженера", url="https://t.me/c3_support_bot")]
             ]
         else:
-            prep_note = f"\n⚠️ **Подготовка:** _{found_eval.get('recommended_action')}_\n" if found_eval.get("status") == "NEEDS_PREPARATION" else ""
+            rec_act = str(found_eval.get('recommended_action', '')).replace('_', ' ')
+            prep_note = f"\n⚠️ **Подготовка:** {rec_act}\n" if found_eval.get("status") == "NEEDS_PREPARATION" else ""
+            defect_str = str(stairs['defects'][0]).replace('_', ' ') if stairs.get('defects') else "Естественный износ"
             reply_text = (
                 f"✅ **РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU ГОТОВ**\n"
                 f"⏱ *Скорость анализа: Laya {laya_lat} ms + Vision {gemini_lat} ms*\n\n"
@@ -261,7 +272,7 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
                 f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
                 f"• Площадка: **{stairs['landing_sqm']} м²**\n"
                 f"• Основание: {stairs['foundation']}\n"
-                f"• Дефект: _{stairs['defects'][0]}_\n"
+                f"• Дефект: {defect_str}\n"
                 f"{prep_note}\n"
                 f"🛠 **Рекомендуемый заводской комплект C3:**\n"
                 f"• Монолитные Г-образные накладки М1200 / F500 (без шва на ребре)\n"
@@ -286,12 +297,20 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
-        await status_msg.delete()
-        await message.reply(reply_text, parse_mode="Markdown", reply_markup=keyboard)
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        await safe_send_markdown(message, reply_text, reply_markup=keyboard)
 
     except Exception as e:
         logging.error(f"Error handling photo: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ Ошибка при обработке: {e}")
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await message.reply(f"❌ Извините, не удалось сформировать смету: {e}\nПожалуйста, отправьте фото еще раз или напишите параметры текстом.")
 
 
 @dp.callback_query(F.data == "ask_location")
