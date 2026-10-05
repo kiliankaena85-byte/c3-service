@@ -265,8 +265,8 @@ class GeminiStairVisionEngine:
         segment = laya_triage["laya_decision"]["client_segment"]
         urgency = laya_triage["laya_decision"]["urgency_score"]
 
-        image_data = input_data.get("image_base64", "")
-        # If live uploaded image is provided
+        image_data = input_data.get("images_base64") or input_data.get("image_base64", "")
+        # If live uploaded image(s) provided
         if image_data:
             return self._process_uploaded_image(image_data, input_data, laya_triage, start)
 
@@ -280,27 +280,28 @@ class GeminiStairVisionEngine:
         # High-fidelity domain calculation model calibrated on C3 engineering standards
         return self._generate_c3_engineering_solution(input_data, preset_id, custom_text, segment, urgency, start)
 
-    def _process_uploaded_image(self, image_base64: str, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Dict[str, Any]:
+    def _process_uploaded_image(self, image_data: Any, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Dict[str, Any]:
         """
-        Processes real uploaded photo using OpenCV and Gemini Vision.
+        Processes real uploaded photo(s) using OpenCV and Gemini Vision with Multi-View support.
         """
         import numpy as np
         import cv2
 
-        # Clean base64 header if present (e.g. data:image/jpeg;base64,...)
-        if "," in image_base64:
-            raw_b64 = image_base64.split(",", 1)[1]
+        if isinstance(image_data, list):
+            raw_b64_list = [img.split(",", 1)[1] if "," in img else img for img in image_data if img]
+            raw_b64 = raw_b64_list[0] if raw_b64_list else ""
         else:
-            raw_b64 = image_base64
+            raw_b64 = image_data.split(",", 1)[1] if "," in image_data else image_data
+            raw_b64_list = [raw_b64]
 
-        # If live Vision API key (OpenRouter or Google) is available, pass real image to Gemini Vision
+        # If live Vision API key (OpenRouter or Google) is available, pass real image(s) to Gemini Vision
         if self.api_key or self.openrouter_key:
             try:
-                gemini_res = self._call_gemini_vision(raw_b64, input_data, laya_triage, start_time)
+                gemini_res = self._call_gemini_vision(raw_b64_list, input_data, laya_triage, start_time)
                 if gemini_res:
                     return gemini_res
             except Exception as e:
-                print(f"[GEMINI VISION] Live API call fallback to OpenCV engine: {e}")
+                print(f"[C3 VISION] Multi-view API call fallback to OpenCV engine: {e}")
 
         # Real OpenCV & Scipy Computer Vision detection on the uploaded image
         try:
@@ -565,7 +566,8 @@ class GeminiStairVisionEngine:
         allow_direct: bool = True,
         defects: list = None,
         recommendation: str = None,
-        elapsed_ms: float = 1800.0
+        elapsed_ms: float = 1800.0,
+        photos_count: int = 1
     ) -> Dict[str, Any]:
         """
         Pure deterministic C3 factory engineering calculation based on geometry.
@@ -719,6 +721,8 @@ class GeminiStairVisionEngine:
                 "step_layout_explanation": layout_exp,
                 "slabs_explanation": slabs_exp,
                 "defects": defects,
+                "photos_count": photos_count,
+                "is_multiview": photos_count > 1,
                 "foundation_assessment": foundation_eval
             },
             "engineering_solution": {
@@ -744,13 +748,28 @@ class GeminiStairVisionEngine:
             }
         }
 
-    def _call_gemini_vision(self, base64_img: str, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Optional[Dict[str, Any]]:
-        """Live Gemini Multimodal Vision API call with inline image"""
+    def _call_gemini_vision(self, base64_imgs: Any, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Optional[Dict[str, Any]]:
+        """Live Gemini Multimodal Vision API call with inline image(s) and Multi-View support"""
         import requests
         import json
 
         openrouter_key = os.getenv("OPENROUTER_API_KEY")
         google_key = self.api_key or os.getenv("GEMINI_API_KEY")
+
+        if isinstance(base64_imgs, list):
+            img_list = base64_imgs
+        else:
+            img_list = [base64_imgs]
+
+        is_multiview = len(img_list) > 1
+        multi_note = ""
+        if is_multiview:
+            multi_note = (
+                f"\n\nВНИМАНИЕ — ВАМ ПРЕДОСТАВЛЕНО {len(img_list)} РАЗНЫХ РАКУРСА ЭТОЙ ВХОДНОЙ ГРУППЫ (МУЛЬТИ-РАКУРСНЫЙ 3D-АНАЛИЗ):\n"
+                "- Сопоставь ракурсы: Фото 1 (фасадный вид спереди) используй для замера ширины марша и подсчета ступеней спереди.\n"
+                "- Фото 2 (и 3) (ракурс сбоку под углом 45° или сверху) используй для проверки боковых заходов, точной глубины площадки свыше 380 мм и скрытых зон основания.\n"
+                "- Выполни единый пространственный 3D-синтез геометрии по всем ракурсам.\n"
+            )
 
         prompt = (
             "Ты — главный инженер-технолог завода монолитных ступеней C3 (ООО «ИННОФОРМА», г. Тверь, c3.ru).\n"
@@ -810,25 +829,29 @@ class GeminiStairVisionEngine:
                     "X-Title": "C3 AI Engine",
                     "Content-Type": "application/json"
                 }
+                user_content = [{"type": "text", "text": prompt + multi_note}]
+                for b64 in img_list:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                    })
+
                 payload = {
                     "model": "google/gemini-2.5-flash",
                     "max_tokens": 1500,
                     "messages": [
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
-                            ]
+                            "content": user_content
                         }
                     ],
                     "response_format": {"type": "json_object"}
                 }
-                r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=25)
+                r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=30)
                 if r.status_code == 200:
                     raw_content = r.json()["choices"][0]["message"]["content"]
                     parsed_data = json.loads(raw_content)
-                    print(f"[C3 VISION] Engine success: overlays={parsed_data.get('total_c3_step_overlays')}, mat={parsed_data.get('material')}")
+                    print(f"[C3 VISION] Multi-view success ({len(img_list)} photos): overlays={parsed_data.get('total_c3_step_overlays')}, mat={parsed_data.get('material')}")
             except Exception as e:
                 print(f"[C3 VISION] Primary API attempt failed: {e}")
 
@@ -840,23 +863,24 @@ class GeminiStairVisionEngine:
                     "x-goog-api-key": google_key,
                     "Api-Revision": "2026-05-20"
                 }
+                google_inputs = [{"type": "text", "text": prompt + multi_note}]
+                for b64 in img_list:
+                    google_inputs.append({"type": "image", "data": b64, "mime_type": "image/jpeg"})
+
                 payload = {
                     "model": "gemini-3.8-flash",
-                    "input": [
-                        {"type": "image", "data": base64_img, "mime_type": "image/jpeg"},
-                        {"type": "text", "text": prompt}
-                    ]
+                    "input": google_inputs
                 }
-                r = requests.post("https://generativelanguage.googleapis.com/v1beta/interactions", headers=headers, json=payload, timeout=25)
+                r = requests.post("https://generativelanguage.googleapis.com/v1beta/interactions", headers=headers, json=payload, timeout=30)
                 if r.status_code == 200:
                     text_out = r.json().get("output_text") or ""
                     s = text_out.find("{")
                     e = text_out.rfind("}")
                     if s != -1 and e != -1:
                         parsed_data = json.loads(text_out[s:e+1])
-                        print(f"[GEMINI VISION] Google Interactions success: overlays={parsed_data.get('total_c3_step_overlays')}")
+                        print(f"[C3 VISION] Google Interactions success ({len(img_list)} photos): overlays={parsed_data.get('total_c3_step_overlays')}")
             except Exception as e:
-                print(f"[GEMINI VISION] Google attempt failed: {e}")
+                print(f"[C3 VISION] Google attempt failed: {e}")
 
         if not parsed_data:
             return None
@@ -926,7 +950,8 @@ class GeminiStairVisionEngine:
             allow_direct=allow_direct,
             defects=defects,
             recommendation=recommendation,
-            elapsed_ms=elapsed_ms
+            elapsed_ms=elapsed_ms,
+            photos_count=len(img_list)
         )
 
     def _generate_c3_engineering_solution(self, input_data: Dict[str, Any], preset_id: str, text: str, segment: str, urgency: int, start_time: float) -> Dict[str, Any]:

@@ -179,7 +179,10 @@ def make_c3_keyboard(current_steps: int, current_porch: str, has_logistics: bool
     action_rows = []
     if not has_logistics:
         action_rows.append([InlineKeyboardButton(text="📍 Рассчитать доставку в мой город", callback_data="ask_location")])
-    action_rows.append([InlineKeyboardButton(text="📞 Заказать бесплатный замер", callback_data="order_measure")])
+    action_rows.append([
+        InlineKeyboardButton(text="📞 Заказать бесплатный замер", callback_data="order_measure"),
+        InlineKeyboardButton(text="🔄 Новая лестница", callback_data="reset_photos")
+    ])
     action_rows.append([
         InlineKeyboardButton(text="📄 Каталог C3 (PDF)", url="https://c3.ru/catalog/"),
         InlineKeyboardButton(text="💬 Инженер завода", url="https://t.me/c3_support_bot")
@@ -195,6 +198,7 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
     allow_direct = found_eval.get("allow_direct_c3", True)
     levels = stairs.get("levels_count", 3)
     porch_type = stairs.get("porch_type", "1_sided_direct")
+    photos_count = stairs.get("photos_count", 1)
 
     logistics_section = ""
     if log_info:
@@ -238,8 +242,20 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
     layout_str = f"\n📐 **Инженерный раскрой завода C3:**\n• {str(stairs.get('step_layout_explanation', '')).replace('_', ' ')}\n" if stairs.get('step_layout_explanation') else ""
     slabs_str = f"• {str(stairs.get('slabs_explanation', '')).replace('_', ' ')}\n" if stairs.get('slabs_explanation') else ""
 
+    if photos_count > 1:
+        header_text = f"🎯 **МУЛЬТИ-РАКУРСНЫЙ 3D-РАСЧЕТ C3 ({photos_count} РАКУРСА ОБЪЕДИНЕНЫ)**"
+        multi_badge = f"\n👁‍🗨 **3D-синтез ракурсов:** Фасад и боковой обзор сопоставлены. Мертвые зоны проверены.\n"
+        hint_text = "👇 *Если требуется скорректировать параметры или сбросить ракурсы, используйте кнопки ниже:*"
+    else:
+        header_text = "✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**"
+        multi_badge = ""
+        hint_text = (
+            "💡 **Мульти-ракурс C3:** Чтобы проверить скрытые зоны и точную глубину площадки, отправьте **второе фото сбоку (под углом 45°)** — AI автоматически объединит оба кадра!\n\n"
+            "👇 *Или скорректируйте число ступеней и форму кнопками ниже:*"
+        )
+
     reply_text = (
-        f"✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**\n"
+        f"{header_text}\n"
         f"⏱ *Время экспресс-расчета: {round(calculation.get('gemini_latency_ms', 1200)/1000, 1)} сек*\n\n"
         f"📊 **Диагностика геометрии:**\n"
         f"{levels_str}"
@@ -247,6 +263,7 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
         f"• Доборные плиты покрытия: **{stairs['landing_sqm']} м²**\n"
         f"• Конструкция: {stairs['foundation']}\n"
         f"• Дефект основания: {defect_str}\n"
+        f"{multi_badge}"
         f"{layout_str}"
         f"{slabs_str}"
         f"{prep_note}\n"
@@ -260,7 +277,7 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
         f"🛡 **Экономия за 10 лет (TCO):**\n"
         f"Плитка перекладывается 3 раза за 10 лет. Накладки C3 служат более 20 лет без ремонта.\n"
         f"Ваша чистая выгода: **+{sol['tco_savings_10yr_rub']:,} руб.**\n\n"
-        f"👇 *Если на фото неверно распознано число ступеней или форма крыльца, выберите нужные параметры кнопками ниже:*"
+        f"{hint_text}"
     ).replace(",", " ")
 
     keyboard = make_c3_keyboard(levels, porch_type, bool(log_info))
@@ -269,9 +286,21 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
 
 @dp.message(F.photo)
 async def handle_stair_photo(message: types.Message, bot: Bot):
-    status_msg = await message.answer("⏳ *Сканирую фото: AI-инженер C3 анализирует объект...*", parse_mode="Markdown")
     user_id = message.from_user.id
-    
+    session = user_sessions.get(user_id, {})
+
+    import time
+    now = time.time()
+    last_time = session.get("last_photo_time", 0)
+    photos = session.get("photos", [])
+
+    # Check if this photo is an additional angle (sent within 15 minutes and max 3)
+    if (now - last_time < 900) and len(photos) > 0 and len(photos) < 3:
+        status_msg = await message.answer(f"⏳ *Добавляю {len(photos) + 1}-й ракурс для мульти-ракурсного 3D-анализа C3...*", parse_mode="Markdown")
+    else:
+        status_msg = await message.answer("⏳ *Сканирую фото: AI-инженер C3 анализирует объект...*", parse_mode="Markdown")
+        photos = []
+
     try:
         # 1. Download photo from Telegram
         photo = message.photo[-1]
@@ -280,10 +309,10 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         file_bytes = file_io.getvalue()
         b64_image = base64.b64encode(file_bytes).decode("utf-8")
 
-        # 2. Decision Triage
+        # 2. Decision Triage (on latest image)
         caption = message.caption or ""
         author = message.from_user.full_name or "Пользователь"
-        
+
         triage = laya_classifier.triage_request({
             "image_base64": b64_image,
             "text": caption
@@ -299,15 +328,26 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
             )
             return
 
-        # 3. Multimodal Reasoning & Geometry Detection
-        await status_msg.edit_text(
-            "⚡ *Входная группа распознана!*\n"
-            "🔍 *AI-система рассчитывает геометрию ступеней, раскрой и смету завода C3...*",
-            parse_mode="Markdown"
-        )
+        photos.append(b64_image)
+        session["photos"] = photos
+        session["last_photo_time"] = now
+
+        num_photos = len(photos)
+        if num_photos > 1:
+            await status_msg.edit_text(
+                f"⚡ *Синтезирую {num_photos} ракурса входной группы!*\n"
+                "🔍 *AI-система сопоставляет фасад и боковой обзор для точной 3D-карты C3...*",
+                parse_mode="Markdown"
+            )
+        else:
+            await status_msg.edit_text(
+                "⚡ *Входная группа распознана!*\n"
+                "🔍 *AI-система рассчитывает геометрию ступеней, раскрой и смету завода C3...*",
+                parse_mode="Markdown"
+            )
 
         calculation = gemini_vision.process_stair_inquiry({
-            "image_base64": b64_image,
+            "images_base64": photos,
             "text": caption,
             "author": author
         }, triage)
@@ -316,7 +356,6 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         found_eval = stairs.get("foundation_assessment", {})
 
         # Check regional logistics (from user session or caption)
-        session = user_sessions.get(user_id, {})
         log_info = session.get("logistics")
         if not log_info and caption:
             log_info = C3RegionalLogistics.resolve_by_text(caption)
@@ -336,7 +375,8 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
             "material": stairs.get("foundation", "Бетонное основание"),
             "allow_direct": found_eval.get("allow_direct_c3", True),
             "defects": stairs.get("defects", []),
-            "recommended_action": found_eval.get("recommended_action", "")
+            "recommended_action": found_eval.get("recommended_action", ""),
+            "photos_count": num_photos
         }
         user_sessions[user_id] = session
 
@@ -443,6 +483,23 @@ async def cb_set_shape(callback: types.CallbackQuery):
         "3_sided_pyramidal": "Сход на 3 стороны"
     }
     await callback.answer(f"✅ Выбрано: {shape_labels.get(new_shape, new_shape)}")
+
+
+@dp.callback_query(F.data == "reset_photos")
+async def cb_reset_photos(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    session["photos"] = []
+    session.pop("current_calc_state", None)
+    session.pop("last_calc", None)
+    session["last_photo_time"] = 0
+    user_sessions[user_id] = session
+    await callback.message.answer(
+        "🔄 **Память ракурсов очищена.**\n\n"
+        "Отправьте фотографию новой лестницы или крыльца для расчета!",
+        parse_mode="Markdown"
+    )
+    await callback.answer("✅ Ракурсы сброшены")
 
 
 @dp.callback_query(F.data == "ask_location")
