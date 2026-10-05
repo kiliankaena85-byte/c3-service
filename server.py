@@ -9,6 +9,7 @@ import json
 import asyncio
 import requests
 import uvicorn
+from contextlib import asynccontextmanager
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, HTMLResponse, Response
 from starlette.routing import Route, Mount
@@ -153,8 +154,11 @@ async def api_logistics(request):
     return JSONResponse(default_res)
 
 
-async def start_keep_alive():
-    asyncio.create_task(keep_alive_loop())
+@asynccontextmanager
+async def lifespan(app):
+    task = asyncio.create_task(keep_alive_loop())
+    yield
+    task.cancel()
 
 
 async def keep_alive_loop():
@@ -180,7 +184,7 @@ routes = [
     Route("/api/logistics", endpoint=api_logistics, methods=["GET", "POST"]),
 ]
 
-app = Starlette(debug=True, routes=routes, on_startup=[start_keep_alive])
+app = Starlette(debug=True, routes=routes, lifespan=lifespan)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
