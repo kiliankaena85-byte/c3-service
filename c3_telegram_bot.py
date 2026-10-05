@@ -159,24 +159,10 @@ async def handle_user_location(message: types.Message):
     await message.answer(reply, parse_mode="Markdown", reply_markup=kb)
 
 
-def make_c3_keyboard(current_steps: int, current_porch: str, has_logistics: bool) -> InlineKeyboardMarkup:
-    # Row 1: Step correction buttons
-    steps_row = []
-    for s in [4, 5, 6, 7, 8, 9]:
-        prefix = "✅ " if s == current_steps else ""
-        steps_row.append(InlineKeyboardButton(text=f"{prefix}{s} ст.", callback_data=f"set_steps_{s}"))
-
-    # Row 2: Porch shape buttons
-    b1_check = "✅ " if current_porch == "1_sided_direct" else ""
-    b2_check = "✅ " if current_porch == "2_sided_corner" else ""
-    b3_check = "✅ " if current_porch == "3_sided_pyramidal" else ""
-    shape_row = [
-        InlineKeyboardButton(text=f"{b1_check}Прямое", callback_data="set_shape_1_sided_direct"),
-        InlineKeyboardButton(text=f"{b2_check}Угловое", callback_data="set_shape_2_sided_corner"),
-        InlineKeyboardButton(text=f"{b3_check}На 3 стороны", callback_data="set_shape_3_sided_pyramidal")
+def make_c3_keyboard(has_logistics: bool = True) -> InlineKeyboardMarkup:
+    action_rows = [
+        [InlineKeyboardButton(text="✏️ Требуется коррекция (параметры)", callback_data="wiz_step_1")]
     ]
-
-    action_rows = []
     if not has_logistics:
         action_rows.append([InlineKeyboardButton(text="📍 Рассчитать доставку в мой город", callback_data="ask_location")])
     action_rows.append([
@@ -187,8 +173,124 @@ def make_c3_keyboard(current_steps: int, current_porch: str, has_logistics: bool
         InlineKeyboardButton(text="📄 Каталог C3 (PDF)", url="https://c3.ru/catalog/"),
         InlineKeyboardButton(text="💬 Инженер завода", url="https://t.me/c3_support_bot")
     ])
+    return InlineKeyboardMarkup(inline_keyboard=action_rows)
 
-    return InlineKeyboardMarkup(inline_keyboard=[steps_row, shape_row] + action_rows)
+
+def get_wizard_step_1(calc_state: dict) -> tuple:
+    levels = calc_state.get("levels_count", 3)
+    text = (
+        "🛠 **Корректировка параметров (Шаг 1 из 4)**\n\n"
+        "🔢 **Сколько всего ступеней (подъемов) на объекте?**\n"
+        "_Считайте каждый подъем снизу вверх, включая верхний подъем вровень с площадкой двери._\n\n"
+        f"Текущее значение: **{levels} ст.**"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="2", callback_data="wiz_set_levels_2"),
+            InlineKeyboardButton(text="3", callback_data="wiz_set_levels_3"),
+            InlineKeyboardButton(text="4", callback_data="wiz_set_levels_4"),
+            InlineKeyboardButton(text="5", callback_data="wiz_set_levels_5"),
+            InlineKeyboardButton(text="6", callback_data="wiz_set_levels_6"),
+        ],
+        [
+            InlineKeyboardButton(text="7", callback_data="wiz_set_levels_7"),
+            InlineKeyboardButton(text="8", callback_data="wiz_set_levels_8"),
+            InlineKeyboardButton(text="9", callback_data="wiz_set_levels_9"),
+            InlineKeyboardButton(text="10", callback_data="wiz_set_levels_10"),
+            InlineKeyboardButton(text="12+", callback_data="wiz_set_levels_12"),
+        ],
+        [InlineKeyboardButton(text=f"➡️ Оставить {levels} ст. (Далее к форме) ➡️", callback_data="wiz_step_2")],
+        [InlineKeyboardButton(text="↩️ Отмена (назад к смете)", callback_data="wiz_cancel")]
+    ])
+    return text, kb
+
+
+def get_wizard_step_2(calc_state: dict) -> tuple:
+    shape_labels = {
+        "1_sided_direct": "Прямое (сход только прямо)",
+        "2_sided_corner": "Угловое Г-образное (сход прямо + 1 бок)",
+        "3_sided_pyramidal": "На 3 стороны (сход прямо + лево + право)"
+    }
+    cur_shape = calc_state.get("porch_type", "1_sided_direct")
+    cur_label = shape_labels.get(cur_shape, "Прямое")
+    text = (
+        "🛠 **Корректировка параметров (Шаг 2 из 4)**\n\n"
+        "📐 **Какая форма у вашей входной группы?**\n\n"
+        f"Текущая конфигурация: **{cur_label}**"
+    )
+    b1_check = "✅ " if cur_shape == "1_sided_direct" else ""
+    b2_check = "✅ " if cur_shape == "2_sided_corner" else ""
+    b3_check = "✅ " if cur_shape == "3_sided_pyramidal" else ""
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{b1_check}▫️ Прямое крыльцо (1 сход)", callback_data="wiz_set_shape_1_sided_direct")],
+        [InlineKeyboardButton(text=f"{b2_check}📐 Угловое Г-образное (2 схода)", callback_data="wiz_set_shape_2_sided_corner")],
+        [InlineKeyboardButton(text=f"{b3_check}🔺 Пирамидальное на 3 стороны", callback_data="wiz_set_shape_3_sided_pyramidal")],
+        [
+            InlineKeyboardButton(text="⬅️ Назад к ступеням", callback_data="wiz_step_1"),
+            InlineKeyboardButton(text="➡️ Далее (к основанию) ➡️", callback_data="wiz_step_3")
+        ],
+        [InlineKeyboardButton(text="✅ Завершить и показать смету", callback_data="wiz_finish")]
+    ])
+    return text, kb
+
+
+def get_wizard_step_3(calc_state: dict) -> tuple:
+    cur_material = calc_state.get("material", "Бетонное основание")
+    allow_direct = calc_state.get("allow_direct", True)
+    if "Металло" in cur_material:
+        status_label = "Металлокаркас (нужен каркас завода C3)"
+    elif "Дерев" in cur_material or "грунт" in cur_material:
+        status_label = "Дерево / грунт (нужен каркас C3 на сваях)"
+    elif not allow_direct or len(calc_state.get("defects", [])) > 1:
+        status_label = "Бетон разрушен (требует ремонта кромок)"
+    else:
+        status_label = "Монолитный бетон (готов к монтажу C3)"
+
+    text = (
+        "🛠 **Корректировка параметров (Шаг 3 из 4)**\n\n"
+        "🏗 **Какое состояние основания под лестницей?**\n\n"
+        f"Текущее: **{status_label}**"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧱 Монолитный бетон (прочный, готов к C3)", callback_data="wiz_set_base_solid_concrete")],
+        [InlineKeyboardButton(text="🛠 Бетон крошится (требует ремонта кромок)", callback_data="wiz_set_base_repair_concrete")],
+        [InlineKeyboardButton(text="🏗 Металлокаркас (нужен готовый каркас C3)", callback_data="wiz_set_base_metal_frame")],
+        [InlineKeyboardButton(text="🪵 Дерево / Грунт (нужен каркас C3 на сваях)", callback_data="wiz_set_base_ground_wood")],
+        [
+            InlineKeyboardButton(text="⬅️ Назад к форме", callback_data="wiz_step_2"),
+            InlineKeyboardButton(text="➡️ Далее (к ширине) ➡️", callback_data="wiz_step_4")
+        ],
+        [InlineKeyboardButton(text="✅ Завершить и показать смету", callback_data="wiz_finish")]
+    ])
+    return text, kb
+
+
+def get_wizard_step_4(calc_state: dict) -> tuple:
+    width = calc_state.get("width_m", 1.8)
+    text = (
+        "🛠 **Корректировка параметров (Шаг 4 из 4)**\n\n"
+        "📏 **Какова примерная ширина лестницы (фасада)?**\n"
+        "_Стандартная длина монолитной накладки C3 — 1210 мм. При большей ширине накладки стыкуются безусадочным швом._\n\n"
+        f"Текущая ширина: **~{width} м**"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="1.0 м", callback_data="wiz_set_width_1.0"),
+            InlineKeyboardButton(text="1.2 м", callback_data="wiz_set_width_1.2"),
+            InlineKeyboardButton(text="1.5 м", callback_data="wiz_set_width_1.5"),
+        ],
+        [
+            InlineKeyboardButton(text="1.8 м", callback_data="wiz_set_width_1.8"),
+            InlineKeyboardButton(text="2.0 м", callback_data="wiz_set_width_2.0"),
+            InlineKeyboardButton(text="2.5 м", callback_data="wiz_set_width_2.5"),
+            InlineKeyboardButton(text="3.0 м+", callback_data="wiz_set_width_3.0"),
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Назад к основанию", callback_data="wiz_step_3"),
+            InlineKeyboardButton(text="✅ Рассчитать смету", callback_data="wiz_finish")
+        ]
+    ])
+    return text, kb
 
 
 def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> tuple:
@@ -197,7 +299,6 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
     found_eval = stairs.get("foundation_assessment", {})
     allow_direct = found_eval.get("allow_direct_c3", True)
     levels = stairs.get("levels_count", 3)
-    porch_type = stairs.get("porch_type", "1_sided_direct")
     photos_count = stairs.get("photos_count", 1)
 
     logistics_section = ""
@@ -212,25 +313,25 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
     if not allow_direct:
         warnings_str = "\n".join([f"⚠️ {str(w).replace('_', ' ')}" for w in found_eval.get("warnings", [])])
         reply_text = (
-            f"🚨 **ВНИМАНИЕ: ОБНАРУЖЕНЫ КРИТИЧЕСКИЕ ДЕФЕКТЫ ОСНОВАНИЯ**\n\n"
+            f"🚨 **ВНИМАНИЕ: ТРЕБУЕТСЯ КАРКАС ИЛИ РЕКОНСТРУКЦИЯ ОСНОВАНИЯ**\n\n"
             f"📊 **Техническое заключение:**\n"
             f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
-            f"• Тип конструкции: {stairs['foundation']}\n"
-            f"• Состояние основания: **{found_eval.get('status', 'Аварийное')}**\n\n"
-            f"🛑 **Выявленные дефекты:**\n"
+            f"• Конструкция: {stairs['foundation']}\n"
+            f"• Состояние основания: **{found_eval.get('status', 'Требуется каркас C3')}**\n\n"
+            f"🛑 **Особенности основания:**\n"
             f"{warnings_str}\n\n"
-            f"⛔ **ПРЯМОЙ МОНТАЖ НАКЛАДОК C3 ЗАПРЕЩЕН РЕГЛАМЕНТОМ ЗАВОДА.**\n"
-            f"Основание потеряло несущую способность или имеет подвижность.\n\n"
+            f"⛔ **Прямой монтаж накладок C3 без жесткого основания недопустим.**\n\n"
             f"🛠 **Заводское решение ООО «ИННОФОРМА» (c3.ru):**\n"
-            f"1️⃣ **Модульный регулируемый металлокаркас C3** на винтовых сваях или опорах (1 рабочий день без мокрых работ, гарантия 20 лет).\n"
-            f"2️⃣ **Капитальный демонтаж и бетонирование новой подушки** силами сертифицированной бригады C3.\n"
+            f"1️⃣ **Модульный регулируемый металлокаркас C3** на винтовых сваях или опорах (1 день без грязи и бетона, гарантия 20 лет).\n"
+            f"2️⃣ **Капитальный ремонт подушки** силами сертифицированной бригады C3.\n"
             f"{logistics_section}\n"
-            f"👨‍💼 *Рекомендуем заказать бесплатный инструментальный выезд инженера.*"
+            f"👇 *Если основание прочное или хотите изменить параметры, нажмите «✏️ Требуется коррекция»:*"
         )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Требуется коррекция (параметры)", callback_data="wiz_step_1")],
             [InlineKeyboardButton(text="🏗 Рассчитать металлокаркас C3", callback_data="order_metal_frame")],
             [InlineKeyboardButton(text="👷 Заказать экспертизу основания", callback_data="order_measure")],
-            [InlineKeyboardButton(text="💬 Консультация главного инженера", url="https://t.me/c3_support_bot")]
+            [InlineKeyboardButton(text="🔄 Новая лестница", callback_data="reset_photos")]
         ])
         return reply_text, keyboard
 
@@ -245,14 +346,11 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
     if photos_count > 1:
         header_text = f"🎯 **МУЛЬТИ-РАКУРСНЫЙ 3D-РАСЧЕТ C3 ({photos_count} РАКУРСА ОБЪЕДИНЕНЫ)**"
         multi_badge = f"\n👁‍🗨 **3D-синтез ракурсов:** Фасад и боковой обзор сопоставлены. Мертвые зоны проверены.\n"
-        hint_text = "👇 *Если требуется скорректировать параметры или сбросить ракурсы, используйте кнопки ниже:*"
     else:
         header_text = "✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**"
         multi_badge = ""
-        hint_text = (
-            "💡 **Мульти-ракурс C3:** Чтобы проверить скрытые зоны и точную глубину площадки, отправьте **второе фото сбоку (под углом 45°)** — AI автоматически объединит оба кадра!\n\n"
-            "👇 *Или скорректируйте число ступеней и форму кнопками ниже:*"
-        )
+
+    hint_text = "👇 *Если AI ошибся в ступенях, форме или основании, нажмите «✏️ Требуется коррекция» — параметры пересчитаются мгновенно.*"
 
     reply_text = (
         f"{header_text}\n"
@@ -280,7 +378,7 @@ def format_c3_calculation_message(calculation: dict, log_info: dict = None) -> t
         f"{hint_text}"
     ).replace(",", " ")
 
-    keyboard = make_c3_keyboard(levels, porch_type, bool(log_info))
+    keyboard = make_c3_keyboard(bool(log_info))
     return reply_text, keyboard
 
 
@@ -398,19 +496,10 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
         await message.reply(f"❌ Извините, не удалось сформировать смету: {e}\nПожалуйста, отправьте фото еще раз или напишите параметры текстом.")
 
 
-@dp.callback_query(F.data.startswith("set_steps_"))
-async def cb_set_steps(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    new_steps = int(callback.data.split("_")[-1])
-    session = user_sessions.get(user_id, {})
-    calc_state = session.get("current_calc_state")
-    if not calc_state:
-        await callback.answer("Отправьте фото лестницы для расчета.")
-        return
-
-    calc_state["levels_count"] = new_steps
+async def apply_wizard_and_show_calc(callback: types.CallbackQuery, user_id: int, session: dict):
+    calc_state = session.get("current_calc_state", {})
     updated_calc = GeminiStairVisionEngine.calculate_c3_spec_by_geometry(
-        levels_count=new_steps,
+        levels_count=calc_state.get("levels_count", 3),
         front_width_m=calc_state.get("width_m", 1.8),
         porch_type=calc_state.get("porch_type", "1_sided_direct"),
         has_left_flank=calc_state.get("has_left_flank", False),
@@ -422,7 +511,6 @@ async def cb_set_steps(callback: types.CallbackQuery):
         defects=calc_state.get("defects", []),
         recommendation=calc_state.get("recommended_action")
     )
-    session["current_calc_state"] = calc_state
     session["last_calc"] = updated_calc
     user_sessions[user_id] = session
 
@@ -431,19 +519,72 @@ async def cb_set_steps(callback: types.CallbackQuery):
         await callback.message.edit_text(new_text, reply_markup=new_kb, parse_mode="Markdown")
     except Exception:
         pass
-    await callback.answer(f"✅ Пересчитано на {new_steps} ступеней!")
+    await callback.answer("✅ Параметры обновлены, смета пересчитана!")
 
 
-@dp.callback_query(F.data.startswith("set_shape_"))
-async def cb_set_shape(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "wiz_step_1")
+async def cb_wiz_step_1(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    new_shape = callback.data.replace("set_shape_", "")
     session = user_sessions.get(user_id, {})
     calc_state = session.get("current_calc_state")
     if not calc_state:
-        await callback.answer("Отправьте фото лестницы для расчета.")
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
         return
+    text, kb = get_wizard_step_1(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
 
+
+@dp.callback_query(F.data.startswith("wiz_set_levels_"))
+async def cb_wiz_set_levels(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_levels = int(callback.data.replace("wiz_set_levels_", ""))
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    calc_state["levels_count"] = new_levels
+    session["current_calc_state"] = calc_state
+    user_sessions[user_id] = session
+
+    # Move sequentially to Step 2 (Форма)
+    text, kb = get_wizard_step_2(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer(f"✅ Ступеней: {new_levels}")
+
+
+@dp.callback_query(F.data == "wiz_step_2")
+async def cb_wiz_step_2(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    text, kb = get_wizard_step_2(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("wiz_set_shape_"))
+async def cb_wiz_set_shape(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_shape = callback.data.replace("wiz_set_shape_", "")
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
     calc_state["porch_type"] = new_shape
     if new_shape == "3_sided_pyramidal":
         calc_state["has_left_flank"] = True
@@ -455,34 +596,168 @@ async def cb_set_shape(callback: types.CallbackQuery):
         calc_state["has_left_flank"] = False
         calc_state["has_right_flank"] = False
 
-    updated_calc = GeminiStairVisionEngine.calculate_c3_spec_by_geometry(
-        levels_count=calc_state.get("levels_count", 3),
-        front_width_m=calc_state.get("width_m", 1.8),
-        porch_type=new_shape,
-        has_left_flank=calc_state.get("has_left_flank", False),
-        has_right_flank=calc_state.get("has_right_flank", False),
-        side_flank_length_m=calc_state.get("side_flank_length_m", 0.8),
-        landing_area_sqm=calc_state.get("landing_sqm", 1.2),
-        material=calc_state.get("material", "Бетонное основание"),
-        allow_direct=calc_state.get("allow_direct", True),
-        defects=calc_state.get("defects", []),
-        recommendation=calc_state.get("recommended_action")
-    )
     session["current_calc_state"] = calc_state
-    session["last_calc"] = updated_calc
     user_sessions[user_id] = session
 
-    new_text, new_kb = format_c3_calculation_message(updated_calc, session.get("logistics"))
+    # Move sequentially to Step 3 (Основание)
+    text, kb = get_wizard_step_3(calc_state)
     try:
-        await callback.message.edit_text(new_text, reply_markup=new_kb, parse_mode="Markdown")
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     except Exception:
         pass
-    shape_labels = {
-        "1_sided_direct": "Прямое крыльцо",
-        "2_sided_corner": "Угловое крыльцо",
-        "3_sided_pyramidal": "Сход на 3 стороны"
-    }
-    await callback.answer(f"✅ Выбрано: {shape_labels.get(new_shape, new_shape)}")
+    await callback.answer("✅ Конфигурация сохранена")
+
+
+@dp.callback_query(F.data == "wiz_step_3")
+async def cb_wiz_step_3(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    text, kb = get_wizard_step_3(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("wiz_set_base_"))
+async def cb_wiz_set_base(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    base_type = callback.data.replace("wiz_set_base_", "")
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+
+    if base_type == "solid_concrete":
+        calc_state["material"] = "Монолитный железобетон"
+        calc_state["allow_direct"] = True
+        calc_state["defects"] = ["Естественный износ"]
+        calc_state["recommended_action"] = "Прямой монтаж накладок C3 на клей"
+    elif base_type == "repair_concrete":
+        calc_state["material"] = "Бетонное основание (требует ремонта)"
+        calc_state["allow_direct"] = True
+        calc_state["defects"] = ["Сколы и выкрашивание бетона по краям"]
+        calc_state["recommended_action"] = "Локальное выравнивание кромок быстротвердеющим безусадочным составом перед укладкой C3"
+    elif base_type == "metal_frame":
+        calc_state["material"] = "Металлокаркас"
+        calc_state["allow_direct"] = False
+        calc_state["defects"] = ["Необходимо изготовление заводского металлокаркаса C3"]
+        calc_state["recommended_action"] = "Проектирование и изготовление модульного металлокаркаса C3 из толстостенного профиля"
+    elif base_type == "ground_wood":
+        calc_state["material"] = "Дерево / открытый грунт"
+        calc_state["allow_direct"] = False
+        calc_state["defects"] = ["Прямой монтаж бетона невозможен"]
+        calc_state["recommended_action"] = "Установка модульного регулируемого металлокаркаса C3 на сваях"
+
+    session["current_calc_state"] = calc_state
+    user_sessions[user_id] = session
+
+    # Move sequentially to Step 4 (Ширина)
+    text, kb = get_wizard_step_4(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer("✅ Основание сохранено")
+
+
+@dp.callback_query(F.data == "wiz_step_4")
+async def cb_wiz_step_4(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    text, kb = get_wizard_step_4(calc_state)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("wiz_set_width_"))
+async def cb_wiz_set_width(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    width_val = float(callback.data.replace("wiz_set_width_", ""))
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    calc_state["width_m"] = width_val
+    session["current_calc_state"] = calc_state
+    user_sessions[user_id] = session
+
+    await apply_wizard_and_show_calc(callback, user_id, session)
+
+
+@dp.callback_query(F.data == "wiz_finish")
+async def cb_wiz_finish(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Сначала отправьте фото лестницы для расчета.")
+        return
+    await apply_wizard_and_show_calc(callback, user_id, session)
+
+
+@dp.callback_query(F.data == "wiz_cancel")
+async def cb_wiz_cancel(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    session = user_sessions.get(user_id, {})
+    last_calc = session.get("last_calc")
+    if last_calc:
+        new_text, new_kb = format_c3_calculation_message(last_calc, session.get("logistics"))
+        try:
+            await callback.message.edit_text(new_text, reply_markup=new_kb, parse_mode="Markdown")
+        except Exception:
+            pass
+    await callback.answer("Возврат к расчету")
+
+
+# Fallback handlers for legacy buttons
+@dp.callback_query(F.data.startswith("set_steps_"))
+async def cb_set_steps_legacy(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_steps = int(callback.data.split("_")[-1])
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Отправьте фото лестницы для расчета.")
+        return
+    calc_state["levels_count"] = new_steps
+    await apply_wizard_and_show_calc(callback, user_id, session)
+
+
+@dp.callback_query(F.data.startswith("set_shape_"))
+async def cb_set_shape_legacy(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    new_shape = callback.data.replace("set_shape_", "")
+    session = user_sessions.get(user_id, {})
+    calc_state = session.get("current_calc_state")
+    if not calc_state:
+        await callback.answer("Отправьте фото лестницы для расчета.")
+        return
+    calc_state["porch_type"] = new_shape
+    if new_shape == "3_sided_pyramidal":
+        calc_state["has_left_flank"] = True
+        calc_state["has_right_flank"] = True
+    elif new_shape == "2_sided_corner":
+        calc_state["has_left_flank"] = True
+        calc_state["has_right_flank"] = False
+    else:
+        calc_state["has_left_flank"] = False
+        calc_state["has_right_flank"] = False
+    await apply_wizard_and_show_calc(callback, user_id, session)
 
 
 @dp.callback_query(F.data == "reset_photos")
