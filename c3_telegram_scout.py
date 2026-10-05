@@ -101,6 +101,10 @@ async def safe_join_single_target(client: TelegramClient, target: str):
         except UserAlreadyParticipantError:
             record_joined_chat(target)
             return True, f"{target} (уже в чате)"
+        except FloodWaitError as fe:
+            return False, f"FLOOD_WAIT_{fe.seconds}"
+        except ChannelsTooMuchError:
+            return False, "CHANNELS_TOO_MUCH"
         except Exception as e:
             record_joined_chat(target)
             return False, str(e)
@@ -115,9 +119,105 @@ async def safe_join_single_target(client: TelegramClient, target: str):
     except UserAlreadyParticipantError:
         record_joined_chat(target)
         return True, f"@{clean_username} (уже в чате)"
+    except FloodWaitError as fe:
+        return False, f"FLOOD_WAIT_{fe.seconds}"
+    except ChannelsTooMuchError:
+        return False, "CHANNELS_TOO_MUCH"
     except Exception as e:
         record_joined_chat(target)
         return False, str(e)
+
+async def sync_existing_dialogs(client: TelegramClient):
+    try:
+        joined = load_joined_set()
+        count = 0
+        async for dialog in client.iter_dialogs(limit=250):
+            entity = dialog.entity
+            if hasattr(entity, 'username') and entity.username:
+                u = f"@{entity.username.lower()}"
+                if u not in joined:
+                    record_joined_chat(u)
+                    joined.add(u)
+                    count += 1
+        logger.info(f"Синхронизировано существующих диалогов аккаунта: {count}")
+    except Exception as e:
+        logger.warning(f"Ошибка при синхронизации существующих диалогов: {e}")
+
+auto_join_state = {
+    "enabled": True,
+    "last_joined": None,
+    "next_min": 0,
+    "status": "active"
+}
+
+async def auto_join_worker(client: TelegramClient):
+    # Пауза 45 секунд при старте для стабилизации сети
+    await asyncio.sleep(45)
+    logger.info("Фоновый воркер авто-подключения (drip-feed) запущен.")
+    while True:
+        try:
+            if not auto_join_state["enabled"]:
+                await asyncio.sleep(30)
+                continue
+
+            pending = load_pending_chats()
+            if not pending:
+                auto_join_state["status"] = "finished"
+                logger.info("Все целевые чаты из базы подключены!")
+                await client.send_message('me', "🎉 **Все живые целевые чаты Твери подключены к аккаунту!** Скаут ведет непрерывный мониторинг.")
+                break
+
+            target = pending[0]
+            ok, detail = await safe_join_single_target(client, target)
+
+            if "FLOOD_WAIT_" in detail:
+                wait_sec = int(detail.split("_")[-1])
+                logger.warning(f"Telegram FloodWait: {wait_sec}s")
+                await client.send_message(
+                    'me',
+                    f"⏳ **Telegram пауза (FloodWait):** Telegram попросил выждать {wait_sec // 60 + 1} мин. Авто-подключение возобновится автоматически без риска для аккаунта."
+                )
+                await asyncio.sleep(wait_sec + 60)
+                continue
+
+            if detail == "CHANNELS_TOO_MUCH":
+                auto_join_state["enabled"] = False
+                await client.send_message(
+                    'me',
+                    "⚠️ **Достигнут лимит Telegram на количество чатов/каналов (500).** Авто-подключение приостановлено."
+                )
+                break
+
+            rem = len(load_pending_chats())
+            # Случайная пауза от 15 до 30 минут (900 - 1800 сек) для полной имитации человека
+            delay_sec = random.randint(900, 1800)
+            next_min = delay_sec // 60
+            auto_join_state["next_min"] = next_min
+
+            if ok:
+                auto_join_state["last_joined"] = detail
+                await client.send_message(
+                    'me',
+                    f"🤖 **[Авто-подключение]** Подключен: {detail}\n"
+                    f"📋 Осталось в очереди: `{rem}` | Следующий чат через ~{next_min} мин.\n"
+                    f"_Команды: `/autojoin off` (пауза) | `/status`_"
+                )
+                try:
+                    clean_u = re.sub(r'https?:\/\/t\.me\/|@', '', target).strip('/')
+                    supabase_sync.update_channel_stats(clean_u, detail, scanned_inc=0)
+                except Exception:
+                    pass
+            else:
+                await client.send_message(
+                    'me',
+                    f"⚠️ **[Авто-подключение]** Пропущен: {target} ({detail})\n"
+                    f"📋 Осталось в очереди: `{rem}` | Следующая попытка через ~{next_min} мин."
+                )
+
+            await asyncio.sleep(delay_sec)
+        except Exception as e:
+            logger.error(f"Ошибка в auto_join_worker: {e}", exc_info=True)
+            await asyncio.sleep(120)
 
 def get_message_link(chat, message) -> str:
     try:
@@ -165,6 +265,11 @@ async def start_scout():
         logger.info(f"✅ Универсальный Скаут запущен от имени: {me.first_name} (@{me.username or 'id=' + str(me.id)})")
         logger.info(f"📡 Активных категорий мониторинга: {len(CATEGORIES)}")
 
+        # Sync existing account dialogs so we never re-join what user already has
+        await sync_existing_dialogs(client)
+        # Launch autonomous drip-feed background joiner (1 chat every 15-30 min)
+        asyncio.create_task(auto_join_worker(client))
+
         # Startup notification
         try:
             startup_msg = (
@@ -180,8 +285,9 @@ async def start_scout():
                 "8. 📱 SMM, маркетинг и реклама\n"
                 "9. 💼 Вакансии работодателей\n"
                 "10. 📝 Анкеты соискателей / резюме\n\n"
+                "🤖 **Авто-подключение чатов:** Включено (по 1 чату каждые 15–30 мин, drip-feed защита).\n"
+                "• Управление: `/autojoin off` (пауза) | `/autojoin on` (пуск) | `/join 3` (вручную)\n"
                 "⚡️ **База данных:** Supabase pgvector подключена (автообучение семантики включено).\n"
-                "• Источники: все группы, городские чаты и каналы вашего аккаунта.\n"
                 "• Обратная связь: отвечайте `+` или `-` на карточки лидов прямо в Избранном."
             )
             await client.send_message('me', startup_msg)
@@ -220,19 +326,51 @@ async def start_scout():
                         joined_list = load_joined_set()
                         pending_list = load_pending_chats()
                         metrics = supabase_sync.get_summary_metrics()
+                        aj_txt = "🟢 Включено (раз в 15–30 мин)" if auto_join_state["enabled"] else "⏸ На паузе"
                         msg = (
                             "📊 **Статус Облачного Скаута (Render 24/7):**\n\n"
                             f"✅ **Подключено чатов:** `{len(joined_list)}`\n"
                             f"📋 **В очереди на подключение:** `{len(pending_list)}`\n"
+                            f"🤖 **Фоновое авто-подключение:** `{aj_txt}`\n"
                             f"📡 **Активных категорий:** `10`\n"
                             f"🔑 **Ключевых слов в Supabase:** `{metrics.get('active_keywords', 0)}`\n"
                             f"🛑 **Минус-слов в Supabase:** `{metrics.get('active_negatives', 0)}`\n\n"
                             "💡 *Команды:*\n"
-                            "• `/join 3` — безопасно подключить следующие 3 чата из очереди\n"
+                            "• `/autojoin off` — приостановить фоновое подключение\n"
+                            "• `/autojoin on` — возобновить фоновое подключение\n"
+                            "• `/join 3` — подключить следующие 3 чата прямо сейчас\n"
                             "• `/status` — показать текущий отчет"
                         )
                         await event.reply(msg)
                         return
+
+                    if user_cmd.startswith(("/autojoin", "автоподключение", "авто")):
+                        parts = user_cmd.split()
+                        sub = parts[1] if len(parts) > 1 else ""
+                        if sub in ("off", "стоп", "пауза", "stop", "pause"):
+                            auto_join_state["enabled"] = False
+                            await event.reply("⏸ **Авто-подключение чатов приостановлено.**\nЧтобы возобновить: `/autojoin on`.")
+                            return
+                        elif sub in ("on", "пуск", "старт", "start"):
+                            auto_join_state["enabled"] = True
+                            await event.reply("▶️ **Авто-подключение активировано!**\nСкаут потихоньку подключает по 1 живому чату каждые 15–30 минут.")
+                            return
+                        else:
+                            st = "🟢 Включено (1 чат раз в 15–30 мин)" if auto_join_state["enabled"] else "⏸ На паузе"
+                            p_cnt = len(load_pending_chats())
+                            last_c = auto_join_state["last_joined"] or "в этой сессии еще не подключались"
+                            await event.reply(
+                                f"⚙️ **Статус авто-подключения (Drip-Feed):**\n\n"
+                                f"• Режим: {st}\n"
+                                f"• В очереди живых чатов: `{p_cnt}`\n"
+                                f"• Последний подключенный: {last_c}\n"
+                                f"• Интервал: случайная пауза `15–30 мин` (для защиты аккаунта)\n\n"
+                                "💡 *Управление:*\n"
+                                "• `/autojoin off` — поставить на паузу\n"
+                                "• `/autojoin on` — возобновить\n"
+                                "• `/join 3` — подключить 3 чата прямо сейчас вручную"
+                            )
+                            return
 
                     if user_cmd.startswith(("/join", "подключи", "вступи")):
                         parts = user_cmd.split()
