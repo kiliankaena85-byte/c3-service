@@ -647,9 +647,36 @@ class GeminiStairVisionEngine:
             return None
 
         # Build full high-precision C3 engineering response from real vision analysis
-        steps_count = int(parsed_data.get("steps_count") or 3)
-        stair_width_m = float(parsed_data.get("width_m") or 1.8)
-        landing_area_sqm = float(parsed_data.get("landing_sqm") or 1.5)
+        import re
+        def _parse_float(val, default=1.8):
+            if val is None:
+                return default
+            if isinstance(val, (int, float)):
+                return float(val)
+            m = re.search(r"(\d+(?:[.,]\d+)?)", str(val))
+            if m:
+                try:
+                    return float(m.group(1).replace(",", "."))
+                except Exception:
+                    pass
+            return default
+
+        def _parse_int(val, default=3):
+            if val is None:
+                return default
+            if isinstance(val, int):
+                return val
+            m = re.search(r"\d+", str(val))
+            if m:
+                try:
+                    return int(m.group(0))
+                except Exception:
+                    pass
+            return default
+
+        steps_count = _parse_int(parsed_data.get("steps_count"), default=3)
+        stair_width_m = _parse_float(parsed_data.get("width_m"), default=1.8)
+        landing_area_sqm = _parse_float(parsed_data.get("landing_sqm"), default=1.5)
         detected_mat = parsed_data.get("material") or "Каркасное крыльцо"
         shape = parsed_data.get("shape") or "Прямая"
         allow_direct = bool(parsed_data.get("allow_direct_c3", False))
