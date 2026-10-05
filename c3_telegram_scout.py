@@ -36,6 +36,7 @@ from lead_categories import classify_message, CATEGORIES
 from generate_authentic_copy import generate_authentic_copy
 from c3_humanity_detector import LayaHumanityClassifier
 from c3_supabase_sync import SupabaseSync
+from laya_gatekeeper import LayaGatekeeper
 
 logging.basicConfig(
     format='[%(asctime)s] %(levelname)s [UniversalScout]: %(message)s',
@@ -181,7 +182,13 @@ async def start_scout():
                 persona_prompt = cat_cfg["prompt_persona"]
                 fallback_reply = cat_cfg["fallback_reply"]
 
-                logger.info(f"🎯 Лид обнаружен! Категория: [{cat_title}]")
+                # LAYA Gatekeeper: Anti-Spam & True Customer Demand Triage
+                gate_res = LayaGatekeeper.evaluate(msg_text, cat_id)
+                if not gate_res["is_lead"]:
+                    logger.info(f"🛡 [LAYA GATE] Отсеян мусорный/рекламный пост ({gate_res['intent']}): {gate_res['reason']}")
+                    return
+
+                logger.info(f"🎯 Настоящий лид обнаружен! Категория: [{cat_title}] | Инвент: {gate_res['intent']}")
                 logger.info(f"Текст: {msg_text[:100]}...")
 
                 sender = await event.get_sender()
@@ -221,8 +228,8 @@ async def start_scout():
                         "raw_text": msg_text,
                         "category_id": cat_id,
                         "category_title": cat_title,
-                        "match_type": "keyword",
-                        "confidence_score": 0.95,
+                        "match_type": f"laya_{gate_res['intent'].lower()}",
+                        "confidence_score": gate_res.get("confidence", 0.95),
                         "generated_pitch": draft_text,
                         "humanity_score": round(human_score / 100.0, 2),
                         "status": "new",
@@ -243,7 +250,7 @@ async def start_scout():
                     f"«_{msg_text}_»\n\n"
                     f"💡 **Черновик ответа (нажмите скопировать):**\n"
                     f"```{draft_text}```\n\n"
-                    f"📊 **Аудит LAYA:** Человечность: `{human_score}%` | ИИ-слоп: `{slop_score}%`\n"
+                    f"📊 **Аудит LAYA:** Человечность: `{human_score}%` | Тип: `{gate_res['intent']}`\n"
                     f"🔗 **Открыть сообщение:** [Перейти в чат]({msg_link})\n\n"
                     f"⚡️ *Ответьте на это сообщение для обратной связи:*\n"
                     f"• `+` или `ок` — принять лид (повышает вес ключа в Supabase)\n"

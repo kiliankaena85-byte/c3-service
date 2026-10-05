@@ -63,22 +63,30 @@ def generate_authentic_copy(context: str, max_retries: int = 3, persona_prompt: 
 
     prompt = f"Контекст сообщения из тверского чата:\n{context}\n\nНапиши живой ответ от первого лица без длинных тире (—) и без навязчивой рекламы."
 
+    models_to_try = ["qwen/qwen3.8-27b:free", "google/gemini-2.5-flash"]
+    generated_text = None
+
     for attempt in range(1, max_retries + 1):
-        payload = {
-            "model": "google/gemini-2.5-flash",
-            "messages": [
-                {"role": "system", "content": full_system},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.85,
-            "max_tokens": 300
-        }
+        for model_name in models_to_try:
+            try:
+                payload = {
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": full_system},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.85,
+                    "max_tokens": 300
+                }
+                r = requests.post(url, headers=headers, json=payload, timeout=15)
+                if r.status_code == 200 and "choices" in r.json() and len(r.json()["choices"]) > 0:
+                    generated_text = r.json()["choices"][0]["message"]["content"].strip().strip('"')
+                    break
+            except Exception:
+                continue
 
-        r = requests.post(url, headers=headers, json=payload, timeout=20)
-        if r.status_code != 200:
-            return {"error": f"API error: {r.status_code} {r.text}"}
-
-        generated_text = r.json()["choices"][0]["message"]["content"].strip().strip('"')
+        if not generated_text:
+            return {"error": "All models unavailable", "status": "FAILED"}
 
         # Mobile typography normalization: replace em-dash and en-dash with standard mobile hyphen
         generated_text = generated_text.replace(" — ", " - ").replace("—", "-").replace(" – ", " - ").replace("–", "-")
