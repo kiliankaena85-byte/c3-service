@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C3.ru | AI-Инженер & Лидогенерация (Laya + Gemini 3.8 Flash)</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        c3orange: '#FF5722',
+                        c3dark: '#0f172a',
+                        c3card: '#1e293b',
+                        c3border: '#334155'
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .gradient-border {
+            border: 1px solid transparent;
+            background: linear-gradient(#1e293b, #1e293b) padding-box,
+                        linear-gradient(135deg, #FF5722 0%, #38bdf8 100%) border-box;
+        }
+        .pulse-dot {
+            box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            animation: pulse 1.8s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { box-shadow: 0 0 0 8px rgba(34, 197, 94, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased flex flex-col">
+
+    <!-- Top Header -->
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-50 px-6 py-3.5">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center space-x-3.5">
+                <div class="bg-gradient-to-br from-orange-500 to-red-600 text-white font-extrabold text-xl px-3 py-1 rounded-lg tracking-wider shadow-lg shadow-orange-500/20">
+                    C3.RU
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-base font-bold text-white tracking-tight">Завод «ИННОФОРМА» | Монолитные ступени C3</h1>
+                        <span class="text-xs bg-orange-950 text-orange-400 border border-orange-800/80 px-2 py-0.5 rounded font-mono">Патент РФ №144965U1</span>
+                    </div>
+                    <p class="text-xs text-slate-400">Система лидогенерации и автоматических замеров по фото</p>
+                </div>
+            </div>
+
+            <!-- Architecture Live Badges -->
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 px-3 py-1.5 rounded-lg text-xs">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+                    <span class="font-semibold text-emerald-400">LAYA System 1:</span>
+                    <span class="text-slate-300 font-mono">28ms (~$0/token)</span>
+                </div>
+                <div class="flex items-center gap-2 bg-slate-800/90 border border-slate-700/80 px-3 py-1.5 rounded-lg text-xs">
+                    <span class="w-2 h-2 rounded-full bg-cyan-400"></span>
+                    <span class="font-semibold text-cyan-400">GEMINI 3.8 FLASH:</span>
+                    <span class="text-slate-300 font-mono">Multimodal Vision</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <div class="border-b border-slate-800 bg-slate-900/50">
+        <div class="max-w-7xl mx-auto px-6 flex space-x-2">
+            <button onclick="switchTab('photo')" id="tab-btn-photo" class="tab-btn py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 border-orange-500 text-orange-400">
+                <span>📸</span> AI-Замерщик по фото
+            </button>
+            <button onclick="switchTab('radar')" id="tab-btn-radar" class="tab-btn py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 border-transparent text-slate-400 hover:text-slate-200">
+                <span>💬</span> Радар входящих лидов
+            </button>
+            <button onclick="switchTab('outbound')" id="tab-btn-outbound" class="tab-btn py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 border-transparent text-slate-400 hover:text-slate-200">
+                <span>🏢</span> B2B Сканер фасадов
+            </button>
+            <button onclick="switchTab('roi')" id="tab-btn-roi" class="tab-btn py-3 px-4 border-b-2 font-medium text-sm flex items-center gap-2 border-transparent text-slate-400 hover:text-slate-200">
+                <span>📊</span> ROI-Калькулятор для директора
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <main class="max-w-7xl mx-auto px-6 py-6 flex-1 w-full">
+
+        <!-- ========================================== -->
+        <!-- TAB 1: 📸 AI-ЗАМЕРЩИК ПО ФОТО (VISION DEMO) -->
+        <!-- ========================================== -->
+        <div id="tab-content-photo" class="space-y-6">
+            <!-- Hero banner -->
+            <div class="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-800 p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span>⚡</span> Двухмодельный конвейер оценки ступеней C3 по фотографии
+                    </h2>
+                    <p class="text-sm text-slate-400 mt-1">
+                        Клиент загружает фото разбитого крыльца в WhatsApp/Telegram ➔ <b class="text-emerald-400">Laya</b> фильтрует спам за 28 мс ➔ <b class="text-cyan-400">Gemini 3.8 Flash</b> считает количество накладок, смету и формирует оффер за 5 секунд.
+                    </p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-xs text-slate-400">Выручка завода c накладки:</span>
+                    <span class="text-xs font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-800 px-2 py-1 rounded">Маржа 74.2%</span>
+                </div>
+            </div>
+
+            <!-- Preset selection & Input card -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                <!-- Left Column: Inputs & Presets (5 cols) -->
+                <div class="lg:col-span-5 space-y-4">
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">
+                            1. Выберите готовый тестовый кейс для демо:
+                        </label>
+                        <div class="space-y-2.5">
+                            <!-- Preset 1 -->
+                            <div onclick="selectPreset('cottage_ruined')" id="preset-cottage_ruined" class="preset-card cursor-pointer p-3 rounded-lg border border-orange-500/80 bg-orange-950/20 hover:border-orange-500 transition flex items-center gap-3">
+                                <div class="w-10 h-10 rounded bg-slate-800 flex items-center justify-center text-xl shrink-0 border border-slate-700">🏡</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 class="text-sm font-semibold text-white">Коттедж (Новая Рига)</h4>
+                                        <span class="text-[10px] bg-red-950 text-red-400 px-1.5 py-0.5 rounded border border-red-800 font-mono">Авария 4/4</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 truncate">Клинкер отвалился пластами после зимы, 4 ступени</p>
+                                </div>
+                            </div>
+
+                            <!-- Preset 2 -->
+                            <div onclick="selectPreset('pharmacy_slippery')" id="preset-pharmacy_slippery" class="preset-card cursor-pointer p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:border-slate-600 transition flex items-center gap-3">
+                                <div class="w-10 h-10 rounded bg-slate-800 flex items-center justify-center text-xl shrink-0 border border-slate-700">🏥</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 class="text-sm font-semibold text-white">Аптека (Коммерческий B2B)</h4>
+                                        <span class="text-[10px] bg-amber-950 text-amber-400 px-1.5 py-0.5 rounded border border-amber-800 font-mono">B2B Сеть</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 truncate">Скользкий керамогранит, трещины, 500 чел/день</p>
+                                </div>
+                            </div>
+
+                            <!-- Preset 3 -->
+                            <div onclick="selectPreset('new_concrete')" id="preset-new_concrete" class="preset-card cursor-pointer p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:border-slate-600 transition flex items-center gap-3">
+                                <div class="w-10 h-10 rounded bg-slate-800 flex items-center justify-center text-xl shrink-0 border border-slate-700">🏗️</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 class="text-sm font-semibold text-white">Новостройка (Залитый бетон)</h4>
+                                        <span class="text-[10px] bg-blue-950 text-blue-400 px-1.5 py-0.5 rounded border border-blue-800 font-mono">Свежий марш</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 truncate">Черновое крыльцо на 6 ступеней, ищут отделку</p>
+                                </div>
+                            </div>
+
+                            <!-- Preset 4 (Spam test) -->
+                            <div onclick="selectPreset('spam_cat')" id="preset-spam_cat" class="preset-card cursor-pointer p-3 rounded-lg border border-slate-800 bg-slate-800/40 hover:border-slate-600 transition flex items-center gap-3">
+                                <div class="w-10 h-10 rounded bg-slate-800 flex items-center justify-center text-xl shrink-0 border border-slate-700">🐱</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="flex items-center justify-between">
+                                        <h4 class="text-sm font-semibold text-white">Тест на спам / случайное фото</h4>
+                                        <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">Шум</span>
+                                    </div>
+                                    <p class="text-xs text-slate-400 truncate">Проверка отсева спама Laya без вызова Gemini</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Drag & Drop Live Upload Card -->
+                        <div class="mt-3.5 pt-3.5 border-t border-slate-800">
+                            <label class="block text-xs font-semibold text-orange-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                <span>📸 Или загрузите СВОЁ живое фото:</span>
+                                <span class="text-[10px] text-slate-400 font-normal">JPG, PNG, WebP</span>
+                            </label>
+                            <div id="drop-zone" onclick="document.getElementById('file-input').click()" class="cursor-pointer border-2 border-dashed border-slate-700 hover:border-orange-500 rounded-xl p-3.5 text-center bg-slate-950/60 hover:bg-slate-900 transition group">
+                                <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                                <div class="text-2xl group-hover:scale-110 transition">📤</div>
+                                <div class="text-xs font-semibold text-slate-200 mt-1">Нажмите для выбора или перетащите фото</div>
+                                <div class="text-[10px] text-slate-500 mt-0.5">Реальное фото вашего крыльца или лестницы</div>
+                            </div>
+                        </div>
+
+                        <!-- Visual Stair Preview Card -->
+                        <div class="mt-3.5 pt-3.5 border-t border-slate-800">
+                            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                                Превью входной группы:
+                            </label>
+                            <div id="visual-preview-box" class="h-44 rounded-lg bg-slate-950 border border-slate-800 overflow-hidden relative flex items-center justify-center">
+                                <!-- Dynamic Graphic / SVG will be drawn here -->
+                                <div id="stair-graphic" class="w-full h-full flex flex-col items-center justify-center p-3 text-center">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Run Button -->
+                        <button onclick="runPhotoAnalysis()" id="btn-run-analysis" class="mt-4 w-full bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-orange-600/30 transition flex items-center justify-center gap-2">
+                            <span>🚀</span> Рассчитать через Laya + Gemini 3.8 Flash
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Dual Model Execution Output (7 cols) -->
+                <div class="lg:col-span-7 space-y-4">
+                    
+                    <!-- LAYA Decision Stream (System 1) -->
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 relative overflow-hidden">
+                        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+                                <h3 class="text-sm font-bold text-white tracking-wide">ЭТАП 1: LAYA System 1 Triage</h3>
+                                <span class="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-mono">Решающая модель</span>
+                            </div>
+                            <div id="laya-latency-badge" class="text-xs font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2 py-0.5 rounded">
+                                ⚡ 28.4 ms
+                            </div>
+                        </div>
+
+                        <div id="laya-output-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-3 text-xs">
+                            <div class="bg-slate-950/70 p-2.5 rounded border border-slate-800">
+                                <div class="text-slate-500">Запрос лестницы:</div>
+                                <div id="laya-res-target" class="font-bold text-emerald-400 mt-0.5">ДА (96% conf)</div>
+                            </div>
+                            <div class="bg-slate-950/70 p-2.5 rounded border border-slate-800">
+                                <div class="text-slate-500">Спам / Шум:</div>
+                                <div id="laya-res-spam" class="font-bold text-slate-300 mt-0.5">НЕТ (0%)</div>
+                            </div>
+                            <div class="bg-slate-950/70 p-2.5 rounded border border-slate-800">
+                                <div class="text-slate-500">Срочность:</div>
+                                <div id="laya-res-urgency" class="font-bold text-red-400 mt-0.5">4 / 4 (Авария)</div>
+                            </div>
+                            <div class="bg-slate-950/70 p-2.5 rounded border border-slate-800">
+                                <div class="text-slate-500">Маршрут:</div>
+                                <div id="laya-res-route" class="font-bold text-cyan-400 mt-0.5">В Gemini Vision</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GEMINI 3.8 FLASH Engineering Output (System 2) -->
+                    <div id="gemini-card" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                        <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+                                <h3 class="text-sm font-bold text-white tracking-wide">ЭТАП 2: Gemini 3.8 Flash Vision & Calculation</h3>
+                                <span class="text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-1.5 py-0.5 rounded font-mono">Multimodal</span>
+                            </div>
+                            <div id="gemini-latency-badge" class="text-xs font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/80 px-2 py-0.5 rounded">
+                                340 ms
+                            </div>
+                        </div>
+
+                        <!-- Technical Diagnosis -->
+                        <div id="gemini-stair-analysis" class="space-y-3">
+                            <div class="bg-slate-950/80 border border-slate-800 rounded-lg p-3 text-xs space-y-2">
+                                <div class="flex items-center justify-between text-slate-300 font-semibold">
+                                    <span>🔍 Компьютерное зрение (Vision Detection):</span>
+                                    <span id="detected-steps-tag" class="text-orange-400 font-mono">4 ступени | ~1.4 м ширина</span>
+                                </div>
+                                <div id="defects-list" class="text-slate-400 space-y-1">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- C3 Bill of Materials Specification Table -->
+                            <div>
+                                <h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                                    Спецификация комплекта C3 (Заводские позиции):
+                                </h4>
+                                <div class="overflow-x-auto rounded-lg border border-slate-800">
+                                    <table class="w-full text-xs text-left">
+                                        <thead class="bg-slate-950 text-slate-400 uppercase text-[10px] border-b border-slate-800">
+                                            <tr>
+                                                <th class="px-3 py-2">Номенклатура C3</th>
+                                                <th class="px-2 py-2">Кол-во</th>
+                                                <th class="px-2 py-2">Цена розн.</th>
+                                                <th class="px-3 py-2 text-right">Сумма</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="bom-table-body" class="divide-y divide-slate-800 text-slate-300">
+                                            <!-- Populated by JS -->
+                                        </tbody>
+                                        <tfoot class="bg-slate-950/90 font-bold border-t border-slate-800">
+                                            <tr>
+                                                <td colspan="3" class="px-3 py-2 text-slate-300">Итого розничная смета материалов:</td>
+                                                <td id="bom-total-retail" class="px-3 py-2 text-right text-orange-400 font-mono text-sm">31 380 ₽</td>
+                                            </tr>
+                                            <tr class="text-[11px] text-emerald-400 bg-emerald-950/30">
+                                                <td colspan="3" class="px-3 py-1.5">Себестоимость завода C3 (COGS) / Валовая маржа:</td>
+                                                <td id="bom-factory-margin" class="px-3 py-1.5 text-right font-mono">8 080 ₽ (74.2%)</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- 10-Year TCO Comparison -->
+                            <div class="bg-emerald-950/20 border border-emerald-900/60 rounded-lg p-3 text-xs flex items-center justify-between gap-3">
+                                <div>
+                                    <div class="font-bold text-emerald-400">Сравнение владения (TCO за 10 лет):</div>
+                                    <div class="text-slate-400 text-[11px] mt-0.5">Клинкерная плитка перекладывается 3 раза за 10 лет. Монолитные ступени C3 служат более 20 лет без швов.</div>
+                                </div>
+                                <div class="text-right shrink-0">
+                                    <div class="text-slate-400 text-[10px] uppercase">Экономия клиента:</div>
+                                    <div id="tco-savings-val" class="text-base font-extrabold text-emerald-400 font-mono">+56 500 ₽</div>
+                                </div>
+                            </div>
+
+                            <!-- Generated Message for Client -->
+                            <div>
+                                <div class="flex items-center justify-between mb-1.5">
+                                    <h4 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                                        Готовое экспертное сообщение для WhatsApp / Telegram:
+                                    </h4>
+                                    <button onclick="copyOutreach()" class="text-xs text-orange-400 hover:text-orange-300 flex items-center gap-1">
+                                        <span>📋</span> Скопировать
+                                    </button>
+                                </div>
+                                <div id="outreach-text-box" class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 font-mono whitespace-pre-line leading-relaxed max-h-48 overflow-y-auto">
+                                    <!-- Populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- CRM Integration Card -->
+                            <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-3 text-xs space-y-2">
+                                <div class="flex items-center justify-between">
+                                    <span class="font-bold text-slate-300">📦 Карточка сделки amoCRM / Битрикс24:</span>
+                                    <span id="crm-lead-badge" class="bg-red-950 text-red-400 border border-red-800 px-2 py-0.5 rounded font-mono text-[10px]">🔥 HOT LEAD</span>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 text-[11px]">
+                                    <div><span class="text-slate-500">Следующее действие:</span> <span id="crm-action" class="text-slate-300">Звонок менеджера за 10 мин</span></div>
+                                    <div><span class="text-slate-500">Потенциал маржи завода:</span> <span id="crm-profit" class="text-emerald-400 font-mono">+23 300 ₽</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Skipped by Laya Placeholder (for spam) -->
+                        <div id="laya-skipped-card" class="hidden bg-slate-950/60 border border-red-900/40 rounded-lg p-6 text-center space-y-2">
+                            <div class="text-3xl">🛡️</div>
+                            <h4 class="text-sm font-bold text-red-400">Обработка Gemini 3.8 Flash отменена моделью Laya</h4>
+                            <p class="text-xs text-slate-400 max-w-md mx-auto">
+                                Входные данные не содержат лестниц или классифицированы как спам. Запрос отклонен за 28 мс, сохранив бюджет на токены и ресурсы серверов.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- TAB 2: 💬 РАДАР ВХОДЯЩИХ ЛИДОВ (TEXT DEMO) -->
+        <!-- ========================================== -->
+        <div id="tab-content-radar" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <span>💬</span> Перехват горячих лидов из чатов поселков, форумов и заявок сайта
+                </h2>
+                <p class="text-sm text-slate-400 mt-1">
+                    Laya мгновенно выявляет проблему лестниц (отвалилась плитка, скользит зимой) ➔ Gemini 3.8 Flash формулирует индивидуальный ответ с отработкой возражения по цене.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div class="lg:col-span-5 space-y-4">
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
+                            Выберите входящее сообщение:
+                        </label>
+                        <div class="space-y-2">
+                            <button onclick="selectTextMessage(0)" class="text-msg-btn w-full text-left p-3 rounded-lg border border-orange-500 bg-orange-950/20 text-xs text-slate-300 hover:border-orange-500 transition">
+                                <b class="text-white block mb-1">Чат КП «Новорижские Озера» | Константин:</b>
+                                «Соседи, это просто жесть. Вторую зиму клинкер на крыльце отлетает пластами... Чем облицевать ступени один раз и навсегда?»
+                            </button>
+                            <button onclick="selectTextMessage(1)" class="text-msg-btn w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 text-xs text-slate-300 hover:border-slate-600 transition">
+                                <b class="text-white block mb-1">ForumHouse | Сергей Павлович:</b>
+                                «Залили монолитное крыльцо 6 ступеней. Плитку боюсь из-за скользкости зимой (пожилая мама). Что посоветуете?»
+                            </button>
+                            <button onclick="selectTextMessage(2)" class="text-msg-btn w-full text-left p-3 rounded-lg border border-slate-800 bg-slate-800/40 text-xs text-slate-300 hover:border-slate-600 transition">
+                                <b class="text-white block mb-1">Спам в чате | Бригада Ремонт77:</b>
+                                «Укладка плитки, брусчатки! Любые объемы, низкие цены! Звоните 8-999...»
+                            </button>
+                        </div>
+
+                        <div class="mt-4">
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">Или введите произвольный текст:</label>
+                            <textarea id="custom-text-input" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 focus:border-orange-500 outline-none" placeholder="Например: Ищу нескользкие ступени для магазина..."></textarea>
+                            <button onclick="runTextAnalysis()" class="mt-2 w-full bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 rounded-lg text-xs transition">
+                                Проанализировать сообщение
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-7 space-y-4">
+                    <div id="text-analysis-result" class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- TAB 3: 🏢 B2B СКАНЕР ФАСАДОВ (OUTBOUND)    -->
+        <!-- ========================================== -->
+        <div id="tab-content-outbound" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <span>🏢</span> Проактивный B2B Outbound: AI-Сканер аварийных коммерческих крылец
+                </h2>
+                <p class="text-sm text-slate-400 mt-1">
+                    Скрипт мониторит фото фасадов аптек, магазинов и банков на Яндекс Картах и 2ГИС. При обнаружении сколов и опасной плитки автоматически генерирует персонализированное КП директору сети.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                    <div class="text-xs text-slate-400">Шаг 1: Автопарсинг карт</div>
+                    <div class="font-bold text-white mt-1">Карточки 2ГИС / Яндекс</div>
+                    <p class="text-xs text-slate-500 mt-2">Фильтр по ритейлу: аптеки, банки, продуктовые магазины с высоким пешеходным трафиком.</p>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                    <div class="text-xs text-emerald-400 font-mono">Шаг 2: Laya + Gemini Vision</div>
+                    <div class="font-bold text-white mt-1">Детекция сколов и рисков</div>
+                    <p class="text-xs text-slate-500 mt-2">Gemini детектирует повреждения ступеней и класс скользкости, создавая юр. обоснование рисков падения.</p>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                    <div class="text-xs text-orange-400 font-mono">Шаг 3: Авто-оффер директору</div>
+                    <div class="font-bold text-white mt-1">Монтаж за 1 ночь</div>
+                    <p class="text-xs text-slate-500 mt-2">Готовое КП директору: «Решим проблему за 1 день без остановки работы торговой точки».</p>
+                </div>
+            </div>
+
+            <!-- B2B Offer Example -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div class="font-bold text-sm text-white">Пример сформированного КП для коммерческого директора сети аптек:</div>
+                    <span class="text-xs bg-emerald-950 text-emerald-400 border border-emerald-800 px-2 py-0.5 rounded font-mono">Сформировано Gemini 3.8 Flash</span>
+                </div>
+                <div class="bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-slate-300 font-mono whitespace-pre-line leading-relaxed">
+Тема: Безопасность входной группы аптеки по ул. Ленина: замена скользкой плитки за 1 ночь
+
+Уважаемый руководитель службы эксплуатации!
+
+На фотографиях входной группы вашей аптеки зафиксировано повреждение плиточного покрытия (сколы на ступенях и отсутствие противоскользящих элементов R13). В осенне-зимний период это повышает риск травматизма посетителей и претензий надзорных органов.
+
+Завод «Инноформа» предлагает модернизацию входной группы по запатентованной технологии монолитных ступеней C3:
+1. Монтаж за 1 смену (ночные работы без закрытия аптеки для покупателей).
+2. Монолитные ступени М1200 без швов — гарантия 20+ лет без ежегодного ремонта.
+3. Сертифицированное противоскользящее покрытие R13 (ГОСТ).
+
+Предварительный расчет для 5 ступеней (ширина 2.0 м): 48 500 руб.
+Готовы прислать инженера с образцами накладок в удобное для вас время.
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================== -->
+        <!-- TAB 4: 📊 ROI КАЛЬКУЛЯТОР ДЛЯ ДИРЕКТОРА   -->
+        <!-- ========================================== -->
+        <div id="tab-content-roi" class="hidden space-y-6">
+            <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <span>📊</span> Экономический эффект внедрения AI для завода C3
+                </h2>
+                <p class="text-sm text-slate-400 mt-1">
+                    Интерактивная модель окупаемости: сколько дополнительной чистой прибыли принесет заводу внедрение мгновенного AI-замера по фото при ТЕКУЩЕМ рекламном бюджете.
+                </p>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <!-- Controls (5 cols) -->
+                <div class="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+                    <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider">Параметры экономики завода:</h3>
+                    
+                    <div>
+                        <div class="flex justify-between text-xs text-slate-300 mb-1">
+                            <span>Рекламный бюджет Яндекс.Директ:</span>
+                            <span id="val-budget" class="font-bold text-orange-400 font-mono">500 000 ₽ / мес</span>
+                        </div>
+                        <input type="range" id="slider-budget" min="200000" max="1500000" step="50000" value="500000" oninput="updateRoi()" class="w-full accent-orange-500">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-slate-300 mb-1">
+                            <span>Текущая конверсия сайта в расчет:</span>
+                            <span id="val-cr-old" class="font-bold text-slate-400 font-mono">3.0%</span>
+                        </div>
+                        <input type="range" id="slider-cr-old" min="1" max="5" step="0.5" value="3.0" oninput="updateRoi()" class="w-full accent-slate-500">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-slate-300 mb-1">
+                            <span>Новая конверсия с AI-замером по фото:</span>
+                            <span id="val-cr-new" class="font-bold text-emerald-400 font-mono">6.5% (+3.5%)</span>
+                        </div>
+                        <input type="range" id="slider-cr-new" min="4" max="10" step="0.5" value="6.5" oninput="updateRoi()" class="w-full accent-emerald-500">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-slate-300 mb-1">
+                            <span>Средний чек комплекта ступеней:</span>
+                            <span id="val-aov" class="font-bold text-slate-300 font-mono">75 000 ₽</span>
+                        </div>
+                        <input type="range" id="slider-aov" min="40000" max="150000" step="5000" value="75000" oninput="updateRoi()" class="w-full accent-orange-500">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between text-xs text-slate-300 mb-1">
+                            <span>Валовая маржинальность завода C3:</span>
+                            <span id="val-margin" class="font-bold text-cyan-400 font-mono">70%</span>
+                        </div>
+                        <input type="range" id="slider-margin" min="50" max="85" step="5" value="70" oninput="updateRoi()" class="w-full accent-cyan-500">
+                    </div>
+                </div>
+
+                <!-- Financial Results (7 cols) -->
+                <div class="lg:col-span-7 space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                            <div class="text-xs text-slate-400">Дополнительно расчетов:</div>
+                            <div id="res-extra-leads" class="text-2xl font-extrabold text-white mt-1 font-mono">+117 / мес</div>
+                            <div class="text-[11px] text-slate-500 mt-1">Клиенты, приславшие фото крыльца</div>
+                        </div>
+                        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                            <div class="text-xs text-slate-400">Дополнительных сделок:</div>
+                            <div id="res-extra-sales" class="text-2xl font-extrabold text-orange-400 mt-1 font-mono">+17.5 шт / мес</div>
+                            <div class="text-[11px] text-slate-500 mt-1">При конверсии в оплату 15%</div>
+                        </div>
+                    </div>
+
+                    <!-- Highlight Profit Box -->
+                    <div class="bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-800/80 rounded-2xl p-6 text-center space-y-2">
+                        <div class="text-xs font-semibold text-emerald-400 uppercase tracking-wider">
+                            Дополнительная валовая прибыль завода:
+                        </div>
+                        <div id="res-profit-month" class="text-4xl font-extrabold text-emerald-400 font-mono">
+                            +918 750 ₽ / месяц
+                        </div>
+                        <div id="res-profit-year" class="text-sm font-semibold text-slate-300 font-mono">
+                            Или +11 025 000 ₽ дополнительной прибыли в год!
+                        </div>
+                        <p class="text-xs text-slate-400 pt-2 border-t border-slate-800/80 max-w-lg mx-auto">
+                            При этом рекламный бюджет на Яндекс.Директ остается прежним — меняется только эффективность утилизации кликов за счет быстрого первого контакта.
+                        </p>
+                    </div>
+
+                    <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center justify-between text-xs">
+                        <div class="text-slate-300">
+                            <b>Срок окупаемости пилота:</b> менее 7 дней с первой же продажи.
+                        </div>
+                        <button onclick="window.print()" class="bg-slate-800 hover:bg-slate-700 text-white px-3 py-1.5 rounded font-medium transition">
+                            🖨️ Распечатать для директора
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-950 py-4 px-6 text-center text-xs text-slate-500">
+        Прототип интеллектуальной системы продаж C3.ru • Двухуровневая архитектура LAYA (System 1) + Gemini 3.8 Flash (System 2)
+    </footer>
+
+    <!-- Interactive JavaScript -->
+    <script>
+        let currentPreset = 'cottage_ruined';
+
+        const PRESET_GRAPHICS = {
+            'cottage_ruined': `
+                <svg viewBox="0 0 300 150" class="w-full h-full">
+                    <!-- Brick wall background -->
+                    <rect x="10" y="10" width="280" height="40" fill="#475569" rx="4"/>
+                    <rect x="120" y="15" width="60" height="35" fill="#334155" rx="2"/>
+                    <!-- 4 Broken Steps with red hazard alerts -->
+                    <path d="M 40 140 L 40 115 L 80 115 L 80 90 L 120 90 L 120 65 L 160 65 L 160 50 L 260 50 L 260 140 Z" fill="#64748b"/>
+                    <!-- Cracked Tile overlays -->
+                    <path d="M 45 117 L 75 117" stroke="#ef4444" stroke-width="3" stroke-dasharray="4"/>
+                    <path d="M 85 92 L 115 92" stroke="#ef4444" stroke-width="3" stroke-dasharray="4"/>
+                    <path d="M 125 67 L 155 67" stroke="#ef4444" stroke-width="3" stroke-dasharray="4"/>
+                    <!-- Bounding box simulation -->
+                    <rect x="35" y="45" width="230" height="98" fill="none" stroke="#f97316" stroke-width="2" stroke-dasharray="4"/>
+                    <text x="45" y="40" fill="#f97316" font-size="10" font-family="monospace" font-weight="bold">AI VISION: 4 СТУПЕНИ [РАЗРЫВ ШВОВ]</text>
+                </svg>
+            `,
+            'pharmacy_slippery': `
+                <svg viewBox="0 0 300 150" class="w-full h-full">
+                    <rect x="20" y="10" width="260" height="35" fill="#1e293b" rx="2"/>
+                    <text x="110" y="32" fill="#10b981" font-size="14" font-weight="bold">АПТЕКА 24</text>
+                    <!-- 5 Commercial Steps -->
+                    <path d="M 30 140 L 30 120 L 70 120 L 70 100 L 110 100 L 110 80 L 150 80 L 150 60 L 190 60 L 190 45 L 270 45 L 270 140 Z" fill="#94a3b8"/>
+                    <!-- Ice / Slip hazard warning -->
+                    <circle cx="130" cy="90" r="12" fill="#ef4444" opacity="0.8"/>
+                    <text x="127" y="94" fill="#ffffff" font-size="12" font-weight="bold">!</text>
+                    <rect x="25" y="40" width="250" height="103" fill="none" stroke="#06b6d4" stroke-width="2" stroke-dasharray="4"/>
+                    <text x="35" y="38" fill="#06b6d4" font-size="10" font-family="monospace" font-weight="bold">AI VISION: 5 СТУПЕНЕЙ [СКОЛЬЗКИЙ ПОЛИТУР R9]</text>
+                </svg>
+            `,
+            'new_concrete': `
+                <svg viewBox="0 0 300 150" class="w-full h-full">
+                    <!-- Fresh concrete stairs -->
+                    <path d="M 20 140 L 20 122 L 55 122 L 55 104 L 90 104 L 90 86 L 125 86 L 125 68 L 160 68 L 160 50 L 195 50 L 195 38 L 280 38 L 280 140 Z" fill="#cbd5e1"/>
+                    <rect x="15" y="30" width="270" height="115" fill="none" stroke="#22c55e" stroke-width="2" stroke-dasharray="4"/>
+                    <text x="25" y="25" fill="#22c55e" font-size="10" font-family="monospace" font-weight="bold">AI VISION: ЧЕРНОВОЙ БЕТОН 6 СТУПЕНЕЙ</text>
+                </svg>
+            `,
+            'spam_cat': `
+                <svg viewBox="0 0 300 150" class="w-full h-full">
+                    <rect x="0" y="0" width="300" height="150" fill="#1e293b"/>
+                    <text x="135" y="70" font-size="36">🐱</text>
+                    <text x="75" y="105" fill="#ef4444" font-size="12" font-weight="bold" font-family="monospace">НЕ ЛЕСТНИЦА / СПАМ</text>
+                </svg>
+            `
+        };
+
+        function switchTab(tabId) {
+            ['photo', 'radar', 'outbound', 'roi'].forEach(id => {
+                document.getElementById(`tab-content-${id}`).classList.add('hidden');
+                document.getElementById(`tab-btn-${id}`).classList.remove('border-orange-500', 'text-orange-400');
+                document.getElementById(`tab-btn-${id}`).classList.add('border-transparent', 'text-slate-400');
+            });
+            document.getElementById(`tab-content-${tabId}`).classList.remove('hidden');
+            document.getElementById(`tab-btn-${tabId}`).classList.add('border-orange-500', 'text-orange-400');
+            document.getElementById(`tab-btn-${tabId}`).classList.remove('border-transparent', 'text-slate-400');
+        }
+
+        function selectPreset(presetId) {
+            currentPreset = presetId;
+            document.querySelectorAll('.preset-card').forEach(c => {
+                c.classList.remove('border-orange-500', 'bg-orange-950/20');
+                c.classList.add('border-slate-800', 'bg-slate-800/40');
+            });
+            const selected = document.getElementById(`preset-${presetId}`);
+            if (selected) {
+                selected.classList.add('border-orange-500', 'bg-orange-950/20');
+                selected.classList.remove('border-slate-800', 'bg-slate-800/40');
+            }
+            document.getElementById('stair-graphic').innerHTML = PRESET_GRAPHICS[presetId] || '';
+            runPhotoAnalysis();
+        }
+
+        let uploadedImageBase64 = null;
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            processUploadedFile(file);
+        }
+
+        function processUploadedFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                uploadedImageBase64 = e.target.result;
+                document.getElementById('stair-graphic').innerHTML = `
+                    <div class="relative w-full h-full flex items-center justify-center p-1">
+                        <img src="${uploadedImageBase64}" class="max-h-40 max-w-full rounded object-contain mx-auto shadow-lg" alt="Uploaded stair">
+                        <div class="absolute top-2 left-2 bg-orange-600 text-white text-[10px] font-mono px-2 py-0.5 rounded shadow">ЖИВОЕ ФОТО ПОЛЬЗОВАТЕЛЯ</div>
+                    </div>
+                `;
+                document.querySelectorAll('.preset-card').forEach(c => {
+                    c.classList.remove('border-orange-500', 'bg-orange-950/20');
+                    c.classList.add('border-slate-800', 'bg-slate-800/40');
+                });
+                currentPreset = null;
+                runPhotoAnalysis();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function runPhotoAnalysis() {
+            const btn = document.getElementById('btn-run-analysis');
+            btn.innerHTML = '<span>⏳</span> Обработка Laya + Gemini...';
+            btn.disabled = true;
+
+            try {
+                const payload = uploadedImageBase64 
+                    ? { image_base64: uploadedImageBase64, author: "Пользователь (свое фото)" }
+                    : { preset_id: currentPreset };
+
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                renderPhotoResults(data);
+            } catch (err) {
+                console.error(err);
+            } finally {
+                btn.innerHTML = '<span>🚀</span> Рассчитать через Laya + Gemini 3.8 Flash';
+                btn.disabled = false;
+            }
+        }
+
+        function renderPhotoResults(data) {
+            const laya = data.laya.laya_decision;
+            const layaLat = data.laya.latency_ms;
+            
+            // 1. Render Laya triage
+            document.getElementById('laya-latency-badge').innerText = `⚡ ${layaLat} ms`;
+            document.getElementById('laya-res-target').innerText = laya.is_stair_inquiry ? `ДА (${Math.round(laya.confidence*100)}%)` : 'НЕТ';
+            document.getElementById('laya-res-target').className = `font-bold mt-0.5 ${laya.is_stair_inquiry ? 'text-emerald-400' : 'text-red-400'}`;
+            
+            document.getElementById('laya-res-spam').innerText = laya.is_spam ? 'СПАМ (100%)' : 'НЕТ (0%)';
+            document.getElementById('laya-res-spam').className = `font-bold mt-0.5 ${laya.is_spam ? 'text-red-400' : 'text-slate-300'}`;
+            
+            document.getElementById('laya-res-urgency').innerText = `${laya.urgency_score} / 4`;
+            document.getElementById('laya-res-route').innerText = laya.proceed_to_gemini ? 'В Gemini Vision' : 'Отклонено ($0)';
+
+            // 2. Render Gemini Vision
+            const gemini = data.gemini;
+            if (gemini.status === 'SKIPPED_BY_LAYA') {
+                document.getElementById('gemini-stair-analysis').classList.add('hidden');
+                document.getElementById('laya-skipped-card').classList.remove('hidden');
+                document.getElementById('gemini-latency-badge').innerText = '0 ms (Сэкономлено)';
+                return;
+            }
+
+            document.getElementById('gemini-stair-analysis').classList.remove('hidden');
+            document.getElementById('laya-skipped-card').classList.add('hidden');
+            document.getElementById('gemini-latency-badge').innerText = `${gemini.gemini_latency_ms} ms`;
+
+            // Stair specs
+            const stairs = gemini.detected_stairs;
+            document.getElementById('detected-steps-tag').innerText = `${stairs.steps_count} ступеней | ~${stairs.width_m} м ширина | ${stairs.landing_sqm} м² площадка`;
+
+            // Defects
+            const defectsList = document.getElementById('defects-list');
+            defectsList.innerHTML = stairs.defects.map(d => `<div class="flex items-start gap-1.5"><span class="text-red-400">✖</span><span>${d}</span></div>`).join('');
+
+            // BOM Table
+            const sol = gemini.engineering_solution;
+            const tbody = document.getElementById('bom-table-body');
+            tbody.innerHTML = sol.spec_items.map(item => `
+                <tr class="hover:bg-slate-800/40">
+                    <td class="px-3 py-2 font-medium text-slate-200">${item.name}</td>
+                    <td class="px-2 py-2">${item.quantity}</td>
+                    <td class="px-2 py-2">${item.unit_price ? item.unit_price.toLocaleString() + ' ₽' : '—'}</td>
+                    <td class="px-3 py-2 text-right font-mono font-bold text-slate-200">${item.total_price.toLocaleString()} ₽</td>
+                </tr>
+            `).join('');
+
+            document.getElementById('bom-total-retail').innerText = `${sol.total_retail_price_rub.toLocaleString()} ₽`;
+            document.getElementById('bom-factory-margin').innerText = `${sol.total_cogs_rub.toLocaleString()} ₽ (Маржа ${sol.factory_margin_percent}%)`;
+            document.getElementById('tco-savings-val').innerText = `+${sol.tco_savings_10yr_rub.toLocaleString()} ₽`;
+
+            // Outreach Message
+            document.getElementById('outreach-text-box').innerText = gemini.personalized_outreach_message;
+
+            // CRM Card
+            const crm = gemini.crm_integration_card;
+            document.getElementById('crm-lead-badge').innerText = crm.lead_temperature;
+            document.getElementById('crm-action').innerText = crm.recommended_sales_action;
+            document.getElementById('crm-profit').innerText = `+${crm.estimated_factory_gross_profit_rub.toLocaleString()} ₽`;
+        }
+
+        function copyOutreach() {
+            const text = document.getElementById('outreach-text-box').innerText;
+            navigator.clipboard.writeText(text);
+            alert('Текст скопирован в буфер обмена!');
+        }
+
+        // TAB 2 Text Ingestion Presets
+        const TEXT_PRESETS = [
+            {
+                author: "Константин",
+                chat: "КП Новорижские Озера",
+                text: "Соседи, это просто жесть. Вторую зиму клинкер на парадном крыльце трескается и отлетает пластами. Чем облицевать ступени на улице один раз и навсегда?"
+            },
+            {
+                author: "Сергей Павлович",
+                chat: "ForumHouse",
+                text: "Залили монолитное бетонное крыльцо перед входом в дом (6 ступеней, ширина 2 метра). Сейчас выбираю чистовое покрытие. Брусчатку не хочу, плитку боюсь из-за скользкости зимой (пожилая мама)."
+            },
+            {
+                author: "Бригада Ремонт77",
+                chat: "Спам-рассылка",
+                text: "Укладка плитки, брусчатки, кровельные работы! Любые объемы, низкие цены, русские мастера! Звоните 8-999-..."
+            }
+        ];
+
+        function selectTextMessage(idx) {
+            const p = TEXT_PRESETS[idx];
+            document.getElementById('custom-text-input').value = p.text;
+            runTextAnalysis(p);
+        }
+
+        async function runTextAnalysis(customPreset = null) {
+            const text = customPreset ? customPreset.text : document.getElementById('custom-text-input').value;
+            const author = customPreset ? customPreset.author : "Пользователь сайта";
+
+            const res = await fetch('/api/analyze', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ text: text, author: author })
+            });
+            const data = await res.json();
+            
+            const container = document.getElementById('text-analysis-result');
+            const laya = data.laya.laya_decision;
+            const gemini = data.gemini;
+
+            container.innerHTML = `
+                <div class="border-b border-slate-800 pb-3 flex items-center justify-between">
+                    <span class="text-xs font-mono text-emerald-400">⚡ Laya Triage: ${data.laya.latency_ms} ms</span>
+                    <span class="text-xs font-mono text-cyan-400">Gemini: ${gemini.gemini_latency_ms || 0} ms</span>
+                </div>
+                <div class="grid grid-cols-3 gap-2 text-xs">
+                    <div class="bg-slate-950 p-2 rounded">Лид: <b>${laya.is_stair_inquiry ? 'ЦЕЛЕВОЙ' : 'НЕТ'}</b></div>
+                    <div class="bg-slate-950 p-2 rounded">Спам: <b>${laya.is_spam ? 'ДА (ОТСЕЧЕНО)' : 'НЕТ'}</b></div>
+                    <div class="bg-slate-950 p-2 rounded">Срочность: <b>${laya.urgency_score}/4</b></div>
+                </div>
+                ${gemini.personalized_outreach_message ? `
+                    <div class="space-y-1">
+                        <div class="text-xs font-semibold text-slate-400">Сгенерированный ответ Gemini 3.8 Flash:</div>
+                        <div class="bg-slate-950 p-3 rounded text-xs text-slate-300 font-mono whitespace-pre-line leading-relaxed border border-slate-800">
+                            ${gemini.personalized_outreach_message}
+                        </div>
+                    </div>
+                ` : `
+                    <div class="p-4 bg-red-950/40 border border-red-800 rounded text-xs text-red-300">
+                        Спам заблокирован Laya за 28 мс. Запрос к Gemini не производился.
+                    </div>
+                `}
+            `;
+        }
+
+        // TAB 4 ROI Calculator Logic
+        async function updateRoi() {
+            const budget = document.getElementById('slider-budget').value;
+            const crOld = document.getElementById('slider-cr-old').value / 100;
+            const crNew = document.getElementById('slider-cr-new').value / 100;
+            const aov = document.getElementById('slider-aov').value;
+            const margin = document.getElementById('slider-margin').value / 100;
+
+            document.getElementById('val-budget').innerText = `${Number(budget).toLocaleString()} ₽ / мес`;
+            document.getElementById('val-cr-old').innerText = `${(crOld*100).toFixed(1)}%`;
+            document.getElementById('val-cr-new').innerText = `${(crNew*100).toFixed(1)}% (+${((crNew-crOld)*100).toFixed(1)}%)`;
+            document.getElementById('val-aov').innerText = `${Number(aov).toLocaleString()} ₽`;
+            document.getElementById('val-margin').innerText = `${Math.round(margin*100)}%`;
+
+            const res = await fetch('/api/roi', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    ad_budget: budget,
+                    current_cr: crOld,
+                    new_cr: crNew,
+                    avg_order: aov,
+                    margin: margin
+                })
+            });
+            const data = await res.json();
+
+            document.getElementById('res-extra-leads').innerText = `+${data.extra_leads_monthly} / мес`;
+            document.getElementById('res-extra-sales').innerText = `+${data.extra_sales_monthly} шт / мес`;
+            document.getElementById('res-profit-month').innerText = `+${data.extra_profit_monthly_rub.toLocaleString()} ₽ / мес`;
+            document.getElementById('res-profit-year').innerText = `Или +${data.extra_profit_yearly_rub.toLocaleString()} ₽ дополнительной чистой прибыли в год!`;
+        }
+
+        // Auto-run on load
+        window.onload = function() {
+            selectPreset('cottage_ruined');
+            updateRoi();
+        }
+    </script>
+</body>
+</html>
