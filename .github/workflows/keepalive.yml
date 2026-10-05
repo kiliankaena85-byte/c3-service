@@ -1,0 +1,22 @@
+name: Render 24/7 KeepAlive Pinger
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render Free Tier from sleeping
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping C3 Health API Endpoint
+        run: |
+          echo "Pinging https://c3-service-il4m.onrender.com/api/health..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://c3-service-il4m.onrender.com/api/health)
+          echo "Response HTTP status: $STATUS"
+          if [ "$STATUS" -ne 200 ]; then
+            echo "Warning: Non-200 response received: $STATUS"
+          else
+            echo "Service is healthy and active!"
+          fi
