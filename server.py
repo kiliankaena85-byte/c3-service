@@ -6,6 +6,8 @@ Serves interactive live demonstration and REST API endpoints.
 import os
 import sys
 import json
+import asyncio
+import requests
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, HTMLResponse, Response
@@ -151,6 +153,25 @@ async def api_logistics(request):
     return JSONResponse(default_res)
 
 
+async def start_keep_alive():
+    asyncio.create_task(keep_alive_loop())
+
+
+async def keep_alive_loop():
+    public_url = os.getenv("RENDER_EXTERNAL_URL", "https://c3-service-il4m.onrender.com")
+    health_url = f"{public_url.rstrip('/')}/api/health"
+    print(f"[*] Keep-Alive loop активирован для: {health_url}")
+    await asyncio.sleep(60)
+    while True:
+        try:
+            loop = asyncio.get_running_loop()
+            res = await loop.run_in_executor(None, lambda: requests.get(health_url, timeout=15))
+            print(f"[Keep-Alive] Ping {health_url} -> status {res.status_code}")
+        except Exception as e:
+            print(f"[Keep-Alive] Ping warning: {e}")
+        await asyncio.sleep(540)  # Ping every 9 minutes (Render free timeout is 15 minutes)
+
+
 routes = [
     Route("/", endpoint=index),
     Route("/api/health", endpoint=api_health, methods=["GET"]),
@@ -159,9 +180,9 @@ routes = [
     Route("/api/logistics", endpoint=api_logistics, methods=["GET", "POST"]),
 ]
 
-app = Starlette(debug=True, routes=routes)
+app = Starlette(debug=True, routes=routes, on_startup=[start_keep_alive])
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 7860))
+    port = int(os.getenv("PORT", 10000))
     print(f"[*] Запуск интерактивного прототипа C3: http://localhost:{port}")
     uvicorn.run("server:app", host=os.getenv("HOST", "0.0.0.0"), port=port, reload=False, log_level="info")
