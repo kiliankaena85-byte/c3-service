@@ -16,6 +16,7 @@ Generates 100% authentic, living human drafts directly to Saved Messages ('me').
 
 import os
 import sys
+import re
 import asyncio
 import logging
 from datetime import datetime
@@ -251,31 +252,35 @@ async def start_scout():
                         )
 
                         async def _do_batch_join():
-                            success_count = 0
-                            for i, target in enumerate(batch, 1):
-                                ok, detail = await safe_join_single_target(client, target)
-                                if ok:
-                                    success_count += 1
-                                    await client.send_message('me', f"✅ [{i}/{len(batch)}] Подключен: {detail}")
-                                    try:
-                                        clean_u = re.sub(r'https?:\/\/t\.me\/|@', '', target).strip('/')
-                                        supabase_sync.update_channel_stats(clean_u, detail, scanned_inc=0)
-                                    except Exception:
-                                        pass
-                                else:
-                                    await client.send_message('me', f"⚠️ [{i}/{len(batch)}] Пропущен {target}: {detail}")
+                            try:
+                                success_count = 0
+                                for i, target in enumerate(batch, 1):
+                                    ok, detail = await safe_join_single_target(client, target)
+                                    if ok:
+                                        success_count += 1
+                                        await client.send_message('me', f"✅ [{i}/{len(batch)}] Подключен: {detail}")
+                                        try:
+                                            clean_u = re.sub(r'https?:\/\/t\.me\/|@', '', target).strip('/')
+                                            supabase_sync.update_channel_stats(clean_u, detail, scanned_inc=0)
+                                        except Exception:
+                                            pass
+                                    else:
+                                        await client.send_message('me', f"⚠️ [{i}/{len(batch)}] Не удалось подключить {target}: {detail}")
 
-                                if i < len(batch):
-                                    delay = random.randint(60, 85)
-                                    await asyncio.sleep(delay)
+                                    if i < len(batch):
+                                        delay = random.randint(60, 85)
+                                        await asyncio.sleep(delay)
 
-                            rem = len(load_pending_chats())
-                            await client.send_message(
-                                'me',
-                                f"🎉 **Сессия подключения завершена!**\n"
-                                f"Успешно: `{success_count}/{len(batch)}` | Осталось в очереди: `{rem}` чатов.\n"
-                                "Для следующей пачки отправьте `/join 3`."
-                            )
+                                rem = len(load_pending_chats())
+                                await client.send_message(
+                                    'me',
+                                    f"🎉 **Сессия подключения завершена!**\n"
+                                    f"Успешно: `{success_count}/{len(batch)}` | Осталось в очереди: `{rem}` чатов.\n"
+                                    "Для следующей пачки отправьте `/join 3`."
+                                )
+                            except Exception as be:
+                                logger.error(f"Критическая ошибка пакетного подключения: {be}", exc_info=True)
+                                await client.send_message('me', f"❌ Ошибка при подключении чатов: {be}")
 
                         asyncio.create_task(_do_batch_join())
                         return
