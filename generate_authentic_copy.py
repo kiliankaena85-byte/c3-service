@@ -52,6 +52,7 @@ def generate_authentic_copy(context: str, max_retries: int = 3, persona_prompt: 
     }
 
     active_system_prompt = persona_prompt if persona_prompt else SYSTEM_PROMPT
+    # Append core anti-slop rules regardless of persona
     core_rules = (
         "\n\nКАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:\n"
         "- Длинное тире («—» или «–»). Используй только обычный короткий дефис с пробелами (« - ») или запятые!\n"

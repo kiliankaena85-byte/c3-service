@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Universal Multi-Vertical Telegram Scout & Lead Router (Telethon Daemon for Render.com)
+Universal Multi-Vertical Telegram Scout & Lead Router (Telethon Daemon)
 Monitors community groups, channels, and city chats (e.g. Тверь.Онлайн, Подслушано Тверь, СНТ).
 Classifies and routes leads across 7 verticals:
 1. 🪜 C3 Лестницы и крыльцо
@@ -35,6 +35,7 @@ from telethon.tl.types import User
 from lead_categories import classify_message, CATEGORIES
 from generate_authentic_copy import generate_authentic_copy
 from c3_humanity_detector import LayaHumanityClassifier
+from c3_supabase_sync import SupabaseSync
 
 logging.basicConfig(
     format='[%(asctime)s] %(levelname)s [UniversalScout]: %(message)s',
@@ -47,6 +48,7 @@ API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
+supabase_sync = SupabaseSync()
 processed_msgs = set()
 
 def get_message_link(chat, message) -> str:
@@ -98,17 +100,21 @@ async def start_scout():
         # Startup notification
         try:
             startup_msg = (
-                "🚀 **Универсальный Скаут-Роутер запущен на Render!**\n\n"
-                "📡 **Активные категории мониторинга:**\n"
+                "🚀 **Универсальный Скаут-Роутер запущен!**\n\n"
+                "📡 **10 активных категорий мониторинга:**\n"
                 "1. 🪜 C3 Лестницы и крыльцо\n"
                 "2. 🏡 Дома, дачи и участки\n"
                 "3. 🏢 Квартиры (аренда / покупка)\n"
                 "4. 🚗 Авторынок и выкуп авто\n"
                 "5. 🎁 Отдам даром / барахолка\n"
                 "6. ⚖️ Банкротство физлиц (БФЛ) / долги\n"
-                "7. 📜 Юридические услуги и адвокаты\n\n"
+                "7. 📜 Юридические услуги и адвокаты\n"
+                "8. 📱 SMM, маркетинг и реклама\n"
+                "9. 💼 Вакансии работодателей\n"
+                "10. 📝 Анкеты соискателей / резюме\n\n"
+                "⚡️ **База данных:** Supabase pgvector подключена (автообучение семантики включено).\n"
                 "• Источники: все группы, городские чаты и каналы вашего аккаунта.\n"
-                "• Готовые черновики ответов приходят сюда в Избранное."
+                "• Обратная связь: отвечайте `+` или `-` на карточки лидов прямо в Избранном."
             )
             await client.send_message('me', startup_msg)
         except Exception as e:
@@ -117,8 +123,26 @@ async def start_scout():
         @client.on(events.NewMessage)
         async def handler(event):
             try:
-                # Ignore Saved Messages
+                # Handle interactive feedback in Saved Messages ('me')
                 if event.chat_id == me.id:
+                    if event.is_reply:
+                        try:
+                            reply_msg = await event.get_reply_message()
+                            if reply_msg and reply_msg.text and "🚨 **[СКАУТ-ЛИД:" in reply_msg.text:
+                                import re
+                                m = re.search(r'🆔\s*\*\*ID:\*\*\s*`?([a-f0-9\-]+)`?', reply_msg.text)
+                                lead_prefix = m.group(1) if m else None
+                                user_cmd = (event.message.message or "").strip()
+                                if lead_prefix:
+                                    if user_cmd.startswith(("+", "ок", "Ок", "OK", "ok", "принят", "топ")):
+                                        supabase_sync.record_feedback(lead_prefix, accepted=True)
+                                        await event.reply(f"✅ Лид `{lead_prefix}` подтвержден! Рейтинг ключа повышен в Supabase.")
+                                    elif user_cmd.startswith(("-", "спам", "Спам", "мусор", "мимо", "нет")):
+                                        reason = user_cmd.lstrip("-").strip() or "Отклонено оператором"
+                                        supabase_sync.record_feedback(lead_prefix, accepted=False, rejection_reason=reason)
+                                        await event.reply(f"🛑 Лид `{lead_prefix}` отклонен ({reason}). Добавлены минус-токены в Supabase.")
+                        except Exception as fe:
+                            logger.error(f"Ошибка обработки обратной связи: {fe}")
                     return
 
                 ALLOW_SELF_TEST = os.getenv("ALLOW_SELF_TEST", "true").lower() == "true"
@@ -137,7 +161,17 @@ async def start_scout():
                     return
                 processed_msgs.add(msg_key)
 
-                # Classify against all 7 verticals
+                chat = await event.get_chat()
+                chat_title = getattr(chat, 'title', 'Городской чат')
+                chat_username = getattr(chat, 'username', '') or str(event.chat_id)
+
+                # Record scanned channel activity
+                try:
+                    supabase_sync.update_channel_stats(chat_username, chat_title, scanned_inc=1)
+                except Exception:
+                    pass
+
+                # Classify against all 10 verticals
                 match = classify_message(msg_text)
                 if not match:
                     return
@@ -149,9 +183,6 @@ async def start_scout():
 
                 logger.info(f"🎯 Лид обнаружен! Категория: [{cat_title}]")
                 logger.info(f"Текст: {msg_text[:100]}...")
-
-                chat = await event.get_chat()
-                chat_title = getattr(chat, 'title', 'Городской чат')
 
                 sender = await event.get_sender()
                 sender_name = "Участник"
@@ -178,8 +209,34 @@ async def start_scout():
 
                 draft_text = draft_text.replace(" — ", " - ").replace("—", "-").replace(" – ", " - ").replace("–", "-")
 
+                # Save lead in Supabase
+                lead_id = None
+                try:
+                    lead_id = supabase_sync.save_lead({
+                        "source": "telegram",
+                        "channel_title": chat_title,
+                        "channel_username": chat_username,
+                        "sender_name": sender_name,
+                        "sender_username": sender_handle.lstrip("@"),
+                        "raw_text": msg_text,
+                        "category_id": cat_id,
+                        "category_title": cat_title,
+                        "match_type": "keyword",
+                        "confidence_score": 0.95,
+                        "generated_pitch": draft_text,
+                        "humanity_score": round(human_score / 100.0, 2),
+                        "status": "new",
+                        "message_link": msg_link
+                    })
+                    supabase_sync.update_channel_stats(chat_username, chat_title, scanned_inc=0, leads_inc=1)
+                except Exception as dbe:
+                    logger.error(f"Ошибка сохранения лида в Supabase: {dbe}")
+
+                lead_short_id = lead_id[:8] if lead_id else "local"
+
                 alert_text = (
-                    f"🚨 **[СКАУТ-ЛИД: {cat_title}]**\n\n"
+                    f"🚨 **[СКАУТ-ЛИД: {cat_title}]**\n"
+                    f"🆔 **ID:** `{lead_short_id}`\n\n"
                     f"📍 **Чат:** {chat_title}\n"
                     f"👤 **Автор:** {sender_name} {sender_handle}\n"
                     f"💬 **Сообщение:**\n"
@@ -187,11 +244,14 @@ async def start_scout():
                     f"💡 **Черновик ответа (нажмите скопировать):**\n"
                     f"```{draft_text}```\n\n"
                     f"📊 **Аудит LAYA:** Человечность: `{human_score}%` | ИИ-слоп: `{slop_score}%`\n"
-                    f"🔗 **Открыть сообщение:** [Перейти в чат]({msg_link})"
+                    f"🔗 **Открыть сообщение:** [Перейти в чат]({msg_link})\n\n"
+                    f"⚡️ *Ответьте на это сообщение для обратной связи:*\n"
+                    f"• `+` или `ок` — принять лид (повышает вес ключа в Supabase)\n"
+                    f"• `-` или `спам [причина]` — отклонить и обучить минус-слова"
                 )
 
                 await client.send_message('me', alert_text, link_preview=False)
-                logger.info(f"✅ Карточка лида [{cat_title}] отправлена в 'Избранное'!")
+                logger.info(f"✅ Карточка лида [{cat_title}] (ID: {lead_short_id}) отправлена в 'Избранное'!")
 
             except Exception as e:
                 logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
