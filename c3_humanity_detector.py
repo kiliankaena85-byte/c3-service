@@ -112,7 +112,7 @@ class LayaHumanityClassifier:
                 matched_human.append(phrase)
                 human_weight += weight
 
-        # 2. Match AI / Corporate clichés
+        # 2. Match AI / Corporate clichés & Typographic giveaways
         matched_ai = []
         ai_weight = 0.0
         for phrase, weight in AI_SLOP_MARKERS.items():
@@ -120,10 +120,16 @@ class LayaHumanityClassifier:
                 matched_ai.append(phrase)
                 ai_weight += weight
 
+        # Typographic giveaway: Em-dash (—) and En-dash (–) are classic LLM book typography
+        # Real people on smartphones in Telegram / WhatsApp use short hyphen (-) or commas
+        if "—" in text or "–" in text:
+            matched_ai.append("полиграфическое длинное тире (—/–)")
+            ai_weight += 2.5
+
         # 3. Syntactic complexity & burstiness checks
         sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
         avg_sentence_len = sum(len(s.split()) for s in sentences) / max(1, len(sentences))
-        has_slang_punctuation = any(p in text for p in ["...", "--", "—", "(", ")", "!", "?", ")))"])
+        has_slang_punctuation = any(p in text for p in ["...", "--", " - ", "(", ")", "!", "?", ")))", "))"])
 
         # Penalize unnaturally long, uniform sentences without colloquial punctuation
         if avg_sentence_len > 18 and not has_slang_punctuation:
@@ -136,8 +142,8 @@ class LayaHumanityClassifier:
         raw_ai_ratio = ai_weight / total_signals
 
         # Normalize to 0..1 scale
-        humanity_score = round(min(1.0, max(0.0, (human_weight * 0.25) - (ai_weight * 0.3) + (0.4 if has_slang_punctuation else 0.0))), 2)
-        ai_slop_score = round(min(1.0, max(0.0, (ai_weight * 0.3) - (human_weight * 0.15))), 2)
+        humanity_score = round(min(1.0, max(0.0, (human_weight * 0.25) - (ai_weight * 0.25) + (0.35 if has_slang_punctuation else 0.0))), 2)
+        ai_slop_score = round(min(1.0, max(0.0, (ai_weight * 0.25) - (human_weight * 0.12))), 2)
 
         # 5. Verdict
         if ai_slop_score >= 0.5 or (ai_weight >= 3.0 and human_weight < 2.0):
