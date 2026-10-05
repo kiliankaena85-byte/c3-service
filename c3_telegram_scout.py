@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
 """
-C3 Telegram Scout & Co-Pilot (Telethon Cloud Daemon for Render.com)
-Monitors community groups (cottage settlements, SNT, neighborhood, builder chats),
-detects stair/porch/tile issues, verifies intent via LAYA,
-and generates authentic human drafts directly to your Saved Messages ('me').
+Universal Multi-Vertical Telegram Scout & Lead Router (Telethon Daemon for Render.com)
+Monitors community groups, channels, and city chats (e.g. Тверь.Онлайн, Подслушано Тверь, СНТ).
+Classifies and routes leads across 7 verticals:
+1. 🪜 C3 Лестницы и крыльцо
+2. 🏡 Дома, дачи и участки
+3. 🏢 Квартиры: аренда и покупка
+4. 🚗 Авторынок и выкуп авто
+5. 🎁 Отдам даром / самовывоз
+6. ⚖️ Банкротство физлиц (БФЛ)
+7. 📜 Юридические услуги и адвокаты
 
-Runs seamlessly in cloud environments via Telethon StringSession.
+Generates 100% authentic, living human drafts directly to Saved Messages ('me').
 """
 
 import os
 import sys
-import re
 import asyncio
 import logging
 from datetime import datetime
@@ -26,74 +31,23 @@ load_dotenv()
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import Channel, Chat, User
+from telethon.tl.types import User
+from lead_categories import classify_message, CATEGORIES
 from generate_authentic_copy import generate_authentic_copy
 from c3_humanity_detector import LayaHumanityClassifier
 
 logging.basicConfig(
-    format='[%(asctime)s] %(levelname)s [Scout]: %(message)s',
+    format='[%(asctime)s] %(levelname)s [UniversalScout]: %(message)s',
     level=logging.INFO,
     datefmt='%H:%M:%S'
 )
-logger = logging.getLogger("C3_Cloud_Scout")
+logger = logging.getLogger("Universal_Scout")
 
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 SESSION_STRING = os.getenv("TELEGRAM_SESSION_STRING")
 
-# Trigger patterns (Fast regex pre-filter)
-STAIR_CORE_TRIGGERS = [
-    r'крыльц', r'ступен', r'лестниц', r'входн\w+\s+групп'
-]
-
-STAIR_PROBLEM_KEYWORDS = [
-    r'плитк', r'керамогранит', r'клинкер', r'скользк', r'скользит',
-    r'отвалил', r'отпал', r'отошл', r'отстал', r'раскрошил', r'покрошил',
-    r'отколол', r'пооткалывал', r'треснул', r'зашатал', r'разрушил',
-    r'передела', r'переложи', r'отдела', r'облицов', r'обложи',
-    r'бетон\w+\s+ступен', r'крошит', r'швы\s+полопал'
-]
-
-NEGATIVE_PATTERNS = [
-    r'втор\w+\s+этаж', r'внутри\s+дома', r'деревянн\w+\s+лестниц',
-    r'винтов\w+\s+лестниц', r'чердачн', r'стремянк', r'трансформер',
-    r'карьерн\w+\s+лестниц', r'в\s+небо'
-]
-
-FALLBACK_HUMAN_REPLY = (
-    "У меня на даче такая же беда была с плиткой - две зимы и всё поотлетало, "
-    "вода под швы попадает и рвет. Мы в итоге поставили тверские монолитные ступени C3 "
-    "(они цельные Г-образные из прочного бетона, швов нет на изгибе). "
-    "Уже четвертый год стоят, зимой лопатой чищу - вообще не скользят."
-)
-
 processed_msgs = set()
-
-def is_target_stair_inquiry(text: str) -> tuple[bool, str]:
-    if not text or len(text.strip()) < 10:
-        return False, "Too short"
-
-    clean_text = text.lower()
-
-    for neg in NEGATIVE_PATTERNS:
-        if re.search(neg, clean_text):
-            return False, f"Negative pattern match: {neg}"
-
-    has_core = any(re.search(pat, clean_text) for pat in STAIR_CORE_TRIGGERS)
-    if not has_core:
-        has_tile = bool(re.search(r'плитк|керамогранит|клинкер', clean_text))
-        has_prob = any(re.search(pat, clean_text) for pat in [r'улиц', r'вход', r'двор', r'мороз', r'зимой', r'намерз'])
-        if not (has_tile and has_prob):
-            return False, "No stair/outdoor keywords"
-
-    has_problem = any(re.search(pat, clean_text) for pat in STAIR_PROBLEM_KEYWORDS)
-    has_question = '?' in text or any(q in clean_text for q in ['чем', 'как', 'посоветуйте', 'кто делал', 'подскажите', 'где заказать', 'мастер'])
-
-    if has_problem or has_question:
-        return True, "Valid stair problem/inquiry"
-
-    return False, "No actionable problem or question detected"
-
 
 def get_message_link(chat, message) -> str:
     try:
@@ -107,50 +61,63 @@ def get_message_link(chat, message) -> str:
     return "Ссылка недоступна (приватная группа)"
 
 
-async def start_cloud_scout():
+async def start_scout():
     if not API_ID or not API_HASH:
-        logger.warning("TELEGRAM_API_ID или TELEGRAM_API_HASH не заданы в переменных окружения. Скаут находится в режиме ожидания.")
+        logger.warning("TELEGRAM_API_ID или TELEGRAM_API_HASH не заданы в переменных окружения.")
         return
 
-    # Check for StringSession first (ideal for Render / Docker)
     if SESSION_STRING:
         session = StringSession(SESSION_STRING.strip())
-        logger.info("Используется Telethon StringSession из переменной TELEGRAM_SESSION_STRING")
+        logger.info("Используется Telethon StringSession")
     elif os.path.exists("c3_scout.session"):
         session = "c3_scout"
         logger.info("Используется локальный файл сессии c3_scout.session")
     else:
-        logger.warning("TELEGRAM_SESSION_STRING не задана и файл сессии не найден. Скаут не может авторизоваться.")
+        logger.warning("TELEGRAM_SESSION_STRING не задана и файл c3_scout.session не найден.")
         return
 
-    client = TelegramClient(session, int(API_ID), API_HASH)
+    client = TelegramClient(
+        session,
+        int(API_ID),
+        API_HASH,
+        device_model="Universal Scout",
+        system_version="Linux / Cloud",
+        app_version="2.0.0"
+    )
 
     try:
         await client.connect()
         if not await client.is_user_authorized():
-            logger.error("Сессия не авторизована! Проверьте валидность TELEGRAM_SESSION_STRING.")
+            logger.error("Сессия не авторизована!")
             return
 
         me = await client.get_me()
-        logger.info(f"✅ C3 Скаут успешно запущен в облаке (Render) от имени: {me.first_name} {me.last_name or ''} (@{me.username or 'id=' + str(me.id)})")
-        logger.info("📡 Режим: Облачный Co-Pilot (мониторинг групп + отправка в 'Избранное')")
+        logger.info(f"✅ Универсальный Скаут запущен от имени: {me.first_name} (@{me.username or 'id=' + str(me.id)})")
+        logger.info(f"📡 Активных категорий мониторинга: {len(CATEGORIES)}")
 
-        # Send heartbeat to Saved Messages
+        # Startup notification
         try:
             startup_msg = (
-                "☁️ **C3 Скаут успешно запущен в облаке на Render.com!**\n\n"
-                "• Теперь скаут работает 24/7 независимо от вашего компьютера.\n"
-                "• Мониторинг всех чатов активен.\n"
-                "• Лиды и готовые ответы будут приходить сюда в Избранное."
+                "🚀 **Универсальный Скаут-Роутер запущен на Render!**\n\n"
+                "📡 **Активные категории мониторинга:**\n"
+                "1. 🪜 C3 Лестницы и крыльцо\n"
+                "2. 🏡 Дома, дачи и участки\n"
+                "3. 🏢 Квартиры (аренда / покупка)\n"
+                "4. 🚗 Авторынок и выкуп авто\n"
+                "5. 🎁 Отдам даром / барахолка\n"
+                "6. ⚖️ Банкротство физлиц (БФЛ) / долги\n"
+                "7. 📜 Юридические услуги и адвокаты\n\n"
+                "• Источники: все группы, городские чаты и каналы вашего аккаунта.\n"
+                "• Готовые черновики ответов приходят сюда в Избранное."
             )
             await client.send_message('me', startup_msg)
         except Exception as e:
-            logger.warning(f"Не удалось отправить уведомление о старте в 'me': {e}")
+            logger.warning(f"Не удалось отправить уведомление в 'me': {e}")
 
         @client.on(events.NewMessage)
         async def handler(event):
             try:
-                # Ignore messages in Saved Messages
+                # Ignore Saved Messages
                 if event.chat_id == me.id:
                     return
 
@@ -170,18 +137,24 @@ async def start_cloud_scout():
                     return
                 processed_msgs.add(msg_key)
 
-                is_target, reason = is_target_stair_inquiry(msg_text)
-                if not is_target:
+                # Classify against all 7 verticals
+                match = classify_message(msg_text)
+                if not match:
                     return
 
-                logger.info(f"🎯 Обнаружен целевой запрос! Причина: {reason}")
-                logger.info(f"Текст: {msg_text[:120]}...")
+                cat_id, cat_cfg = match
+                cat_title = cat_cfg["title"]
+                persona_prompt = cat_cfg["prompt_persona"]
+                fallback_reply = cat_cfg["fallback_reply"]
+
+                logger.info(f"🎯 Лид обнаружен! Категория: [{cat_title}]")
+                logger.info(f"Текст: {msg_text[:100]}...")
 
                 chat = await event.get_chat()
-                chat_title = getattr(chat, 'title', 'Группа')
+                chat_title = getattr(chat, 'title', 'Городской чат')
 
                 sender = await event.get_sender()
-                sender_name = "Пользователь"
+                sender_name = "Участник"
                 sender_handle = ""
                 if isinstance(sender, User):
                     sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or "Участник"
@@ -190,22 +163,23 @@ async def start_cloud_scout():
 
                 msg_link = get_message_link(chat, event.message)
 
-                context = f"Участник чата '{chat_title}' пишет:\n«{msg_text}»"
-                gen_res = generate_authentic_copy(context)
+                # Generate customized persona response
+                context = f"Категория: {cat_title}\nЧат: '{chat_title}'\nСообщение участника:\n«{msg_text}»"
+                gen_res = generate_authentic_copy(context, persona_prompt=persona_prompt)
 
                 if gen_res.get("status") in ["APPROVED", "NEEDS_REVIEW"] and gen_res.get("text"):
                     draft_text = gen_res["text"]
                     human_score = int(gen_res.get("eval", {}).get("humanity_score", 0.9) * 100)
                     slop_score = int(gen_res.get("eval", {}).get("ai_slop_score", 0.0) * 100)
                 else:
-                    draft_text = FALLBACK_HUMAN_REPLY
+                    draft_text = fallback_reply
                     human_score = 100
                     slop_score = 0
 
                 draft_text = draft_text.replace(" — ", " - ").replace("—", "-").replace(" – ", " - ").replace("–", "-")
 
                 alert_text = (
-                    f"🚨 **[C3 СКАУТ: НАЙДЕН ЗАПРОС НА ЛЕСТНИЦУ]**\n\n"
+                    f"🚨 **[СКАУТ-ЛИД: {cat_title}]**\n\n"
                     f"📍 **Чат:** {chat_title}\n"
                     f"👤 **Автор:** {sender_name} {sender_handle}\n"
                     f"💬 **Сообщение:**\n"
@@ -217,12 +191,12 @@ async def start_cloud_scout():
                 )
 
                 await client.send_message('me', alert_text, link_preview=False)
-                logger.info("✅ Уведомление с черновиком отправлено в 'Избранное'!")
+                logger.info(f"✅ Карточка лида [{cat_title}] отправлена в 'Избранное'!")
 
             except Exception as e:
                 logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
 
-        logger.info("👂 Облачный скаут начал непрерывное прослушивание сообщений.")
+        logger.info("👂 Универсальный Скаут слушает входящие сообщения во всех чатах...")
         await client.run_until_disconnected()
 
     except Exception as e:
@@ -233,6 +207,6 @@ async def start_cloud_scout():
 
 if __name__ == "__main__":
     try:
-        asyncio.run(start_cloud_scout())
+        asyncio.run(start_scout())
     except KeyboardInterrupt:
-        print("\n🛑 Скаут остановлен.")
+        print("\n🛑 Универсальный Скаут остановлен.")

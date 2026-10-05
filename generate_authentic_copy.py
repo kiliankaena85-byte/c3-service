@@ -44,20 +44,29 @@ SYSTEM_PROMPT = """Ты — опытный владелец загородног
 - Формат ответа: 2-4 коротких естественных предложения без лишней воды.
 """
 
-def generate_authentic_copy(context: str, max_retries: int = 3) -> dict:
+def generate_authentic_copy(context: str, max_retries: int = 3, persona_prompt: str = None) -> dict:
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_KEY}",
         "Content-Type": "application/json"
     }
 
-    prompt = f"Контекст ситуации:\n{context}\n\nНапиши живой ответ от первого лица без длинных тире (—) и без рекламы."
+    active_system_prompt = persona_prompt if persona_prompt else SYSTEM_PROMPT
+    core_rules = (
+        "\n\nКАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:\n"
+        "- Длинное тире («—» или «–»). Используй только обычный короткий дефис с пробелами (« - ») или запятые!\n"
+        "- Никакого канцелярита, рекламных лозунгов и шаблонных фраз.\n"
+        "- Формат: 2-3 коротких естественных предложения как на смартфоне в Telegram."
+    )
+    full_system = active_system_prompt + core_rules
+
+    prompt = f"Контекст сообщения из тверского чата:\n{context}\n\nНапиши живой ответ от первого лица без длинных тире (—) и без навязчивой рекламы."
 
     for attempt in range(1, max_retries + 1):
         payload = {
             "model": "google/gemini-2.5-flash",
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": full_system},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.85,
