@@ -560,27 +560,39 @@ class GeminiStairVisionEngine:
         google_key = self.api_key or os.getenv("GEMINI_API_KEY")
 
         prompt = (
-            "Ты — главный инженер-эксперт завода монолитных ступеней C3 (ООО «ИННОФОРМА», c3.ru).\n"
-            "Внимательно изучи присланную фотографию крыльца/лестницы:\n"
-            "1. Сосчитай точное количество ступеней (не считая верхнюю площадку перед дверью). Считай видимые проступи снизу вверх.\n"
-            "2. Оцени форму конструкции (прямые, угловые L-образные со скосом, радиусные) и наличие перил/ограждений.\n"
-            "3. Оцени материалы: из чего сделаны ступени (террасная доска ДПК, дерево, монолитный бетон, тротуарная плитка, керамогранит, металл).\n"
-            "4. Оцени возможность монтажа монолитных накладок C3 из фибробетона М1200:\n"
-            "   - ВНИМАНИЕ: монтаж монолитных накладок C3 напрямую на доски ДПК или деревянный настил СТРОГО ЗАПРЕЩЕН (доски прогибаются, тяжелый фибробетон треснет). Требуется демонтаж настила и установка сварного регулируемого металлокаркаса C3 на сваях!\n"
-            "   - Если основание бетонное с разрушениями, тоже нужен металлокаркас C3 либо ремонт.\n"
-            "   - Если бетон прочный — разрешен прямой монтаж накладок C3.\n\n"
-            "Ответь строго в формате JSON:\n"
+            "Ты — главный инженер-технолог завода монолитных ступеней C3 (ООО «ИННОФОРМА», г. Тверь, c3.ru).\n"
+            "Внимательно изучи присланную фотографию входной группы и проведи детальный инженерный замер:\n\n"
+            "1. ОПРЕДЕЛЕНИЕ МАСШТАБА И РАЗМЕРОВ:\n"
+            "   - Входная дверь — стандартный ориентир ширины (~1.0 - 1.2 м).\n"
+            "   - Оцени реальную ширину марша (width_m) в метрах.\n"
+            "   - Сосчитай количество видимых уровней подъема (levels_count) от уровня земли/брусчатки до двери.\n\n"
+            "2. АНАЛИЗ СЛОЖНОЙ ГЕОМЕТРИИ (УГЛЫ И ТУМБЫ):\n"
+            "   - Проверь, заворачивает ли ступень за угол (is_corner_step). Если ступень огибает угол (например, с диагональным стыком под 45°), зафиксируй это!\n"
+            "   - Проверь наличие боковой гранитной или бетонной тумбы/консоли/парапета (has_side_pedestal).\n\n"
+            "3. ПРАВИЛО РАСКРОЯ И РАСЧЕТА МАТЕРИАЛОВ ЗАВОДА C3:\n"
+            "   - Стандартная длина монолитной Г-образной накладки C3 — ровно 1210 мм (1.21 м).\n"
+            "   - Если ширина марша больше 1.21 м (например, 1.8 - 2.0 м), то на ОДИН уровень требуется ДВЕ накладки со стыковкой (1210 мм + подрезка со смещением швов).\n"
+            "   - На каждый угловой заворот за угол требуется ДОПОЛНИТЕЛЬНАЯ накладка под угловой рез 45°.\n"
+            "   - Стандартная глубина накладки C3 — 380 мм. Площадка перед дверью имеет глубину больше 380 мм, поэтому для закрытия оставшегося пространства до порога двери обязательно требуются ДОБОРНЫЕ плоские плиты C3!\n"
+            "   - Посчитай точное количество необходимых монолитных накладок C3 (total_c3_step_overlays) и площадь доборных плит (extra_flat_slabs_sqm).\n\n"
+            "Ответь СТРОГО в формате валидного JSON:\n"
             "{\n"
-            '  "steps_count": 3,\n'
-            '  "width_m": 1.8,\n'
-            '  "landing_sqm": 1.5,\n'
-            '  "shape": "угловые ступени со скосом",\n'
-            '  "material": "террасная доска ДПК, белые подступенки, перила слева",\n'
-            '  "allow_direct_c3": false,\n'
-            '  "condition_summary": "Крыльцо из ДПК на легком каркасном основании",\n'
-            '  "engineering_recommendation": "Прямой монтаж накладок C3 на настил ДПК запрещен. Требуется установка модульного металлокаркаса C3 на винтовых сваях под накладки.",\n'
-            '  "defects": ["Каркасный настил из ДПК не обладает несущей жесткостью для монолитного бетона C3"],\n'
-            '  "warnings": ["Монтаж монолитного фибробетона C3 на деревянный/композитный каркас запрещен регламентом"]\n'
+            '  "levels_count": 2,\n'
+            '  "width_m": 1.9,\n'
+            '  "is_corner_step": true,\n'
+            '  "corner_description": "Нижняя ступень заворачивает за левый угол со спилом под 45 градусов",\n'
+            '  "has_side_pedestal": true,\n'
+            '  "pedestal_description": "Справа расположена гранитная тумба в уровень со 2-й ступенью",\n'
+            '  "total_c3_step_overlays": 5,\n'
+            '  "step_layout_explanation": "Ширина марша 1.9 м: на 2 уровня требуется по 2 накладки со стыковкой (4 шт.) плюс 1 накладка на угловой заворот = итого 5 накладок C3",\n'
+            '  "landing_depth_m": 0.9,\n'
+            '  "extra_flat_slabs_sqm": 1.2,\n'
+            '  "slabs_explanation": "Для добора глубины площадки свыше 380 мм проступи и облицовки тумбы требуется 1.2 м2 плоских плит C3",\n'
+            '  "material": "гранит / плитка / бетон",\n'
+            '  "allow_direct_c3": true,\n'
+            '  "condition_summary": "Основание лестницы в хорошем состоянии",\n'
+            '  "engineering_recommendation": "Рекомендуется монтаж накладок C3 с герметизацией стыков герметиком C3",\n'
+            '  "defects": ["Швы между плитками подвержены разрушению от циклов замерзания"]\n'
             "}"
         )
 
@@ -597,7 +609,7 @@ class GeminiStairVisionEngine:
                 }
                 payload = {
                     "model": "google/gemini-2.5-flash",
-                    "max_tokens": 1200,
+                    "max_tokens": 1500,
                     "messages": [
                         {
                             "role": "user",
@@ -613,7 +625,7 @@ class GeminiStairVisionEngine:
                 if r.status_code == 200:
                     raw_content = r.json()["choices"][0]["message"]["content"]
                     parsed_data = json.loads(raw_content)
-                    print(f"[GEMINI VISION] OpenRouter success: steps={parsed_data.get('steps_count')}, mat={parsed_data.get('material')}")
+                    print(f"[GEMINI VISION] OpenRouter success: overlays={parsed_data.get('total_c3_step_overlays')}, mat={parsed_data.get('material')}")
             except Exception as e:
                 print(f"[GEMINI VISION] OpenRouter attempt failed: {e}")
 
@@ -639,7 +651,7 @@ class GeminiStairVisionEngine:
                     e = text_out.rfind("}")
                     if s != -1 and e != -1:
                         parsed_data = json.loads(text_out[s:e+1])
-                        print(f"[GEMINI VISION] Google Interactions success: steps={parsed_data.get('steps_count')}")
+                        print(f"[GEMINI VISION] Google Interactions success: overlays={parsed_data.get('total_c3_step_overlays')}")
             except Exception as e:
                 print(f"[GEMINI VISION] Google attempt failed: {e}")
 
@@ -674,16 +686,27 @@ class GeminiStairVisionEngine:
                     pass
             return default
 
-        steps_count = _parse_int(parsed_data.get("steps_count"), default=3)
+        levels_count = _parse_int(parsed_data.get("levels_count"), default=2)
+        total_overlays = _parse_int(parsed_data.get("total_c3_step_overlays"), default=levels_count * 2)
+        steps_count = total_overlays  # Total C3 monolithic overlay units to procure!
+        
         stair_width_m = _parse_float(parsed_data.get("width_m"), default=1.8)
-        landing_area_sqm = _parse_float(parsed_data.get("landing_sqm"), default=1.5)
-        detected_mat = parsed_data.get("material") or "Каркасное крыльцо"
-        shape = parsed_data.get("shape") or "Прямая"
-        allow_direct = bool(parsed_data.get("allow_direct_c3", False))
+        landing_area_sqm = _parse_float(parsed_data.get("extra_flat_slabs_sqm") or parsed_data.get("landing_sqm"), default=1.5)
+        
+        detected_mat = parsed_data.get("material") or "Облицованное основание"
+        is_corner = bool(parsed_data.get("is_corner_step", False))
+        corner_desc = parsed_data.get("corner_description", "")
+        has_pedestal = bool(parsed_data.get("has_side_pedestal", False))
+        pedestal_desc = parsed_data.get("pedestal_description", "")
+        step_layout_exp = parsed_data.get("step_layout_explanation", "")
+        slabs_exp = parsed_data.get("slabs_explanation", "")
+        
+        shape = "угловая со скосом" if is_corner else "прямая"
+        allow_direct = bool(parsed_data.get("allow_direct_c3", True))
         defects = parsed_data.get("defects") or ["Несущая способность основания требует проверки"]
         warnings = parsed_data.get("warnings") or []
         condition_summary = parsed_data.get("condition_summary") or "Основание лестницы"
-        recommendation = parsed_data.get("engineering_recommendation") or "Установка металлокаркаса C3"
+        recommendation = parsed_data.get("engineering_recommendation") or "Установка накладок C3"
 
         # Calculate materials and prices
         step_model = C3_SPECS["standard_step"]
@@ -765,10 +788,17 @@ class GeminiStairVisionEngine:
             "status": "SUCCESS",
             "gemini_latency_ms": elapsed_ms,
             "detected_stairs": {
+                "levels_count": levels_count,
                 "steps_count": steps_count,
                 "width_m": stair_width_m,
                 "landing_sqm": landing_area_sqm,
                 "foundation": f"{detected_mat} ({shape})",
+                "is_corner_step": is_corner,
+                "corner_description": corner_desc,
+                "has_side_pedestal": has_pedestal,
+                "pedestal_description": pedestal_desc,
+                "step_layout_explanation": step_layout_exp,
+                "slabs_explanation": slabs_exp,
                 "defects": defects,
                 "foundation_assessment": foundation_eval
             },

@@ -265,14 +265,22 @@ async def handle_stair_photo(message: types.Message, bot: Bot):
             rec_act = str(found_eval.get('recommended_action', '')).replace('_', ' ')
             prep_note = f"\n⚠️ **Подготовка:** {rec_act}\n" if found_eval.get("status") == "NEEDS_PREPARATION" else ""
             defect_str = str(stairs['defects'][0]).replace('_', ' ') if stairs.get('defects') else "Естественный износ"
+            
+            levels_str = f"• Уровней подъема: **{stairs.get('levels_count', 2)}** (ширина марша ~{stairs['width_m']} м)\n" if stairs.get('levels_count') else f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
+            layout_str = f"\n📐 **Инженерный раскрой завода C3:**\n• {str(stairs.get('step_layout_explanation', '')).replace('_', ' ')}\n" if stairs.get('step_layout_explanation') else ""
+            slabs_str = f"• {str(stairs.get('slabs_explanation', '')).replace('_', ' ')}\n" if stairs.get('slabs_explanation') else ""
+
             reply_text = (
-                f"✅ **РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU ГОТОВ**\n"
+                f"✅ **ИНЖЕНЕРНЫЙ РАСЧЕТ ВХОДНОЙ ГРУППЫ C3.RU**\n"
                 f"⏱ *Скорость анализа: Laya {laya_lat} ms + Vision {gemini_lat} ms*\n\n"
-                f"📊 **Диагностика по фото:**\n"
-                f"• Ступеней: **{stairs['steps_count']} шт.** (ширина ~{stairs['width_m']} м)\n"
-                f"• Площадка: **{stairs['landing_sqm']} м²**\n"
+                f"📊 **Диагностика геометрии:**\n"
+                f"{levels_str}"
+                f"• Всего накладок C3 (1210 мм): **{stairs['steps_count']} шт.**\n"
+                f"• Доборные плиты покрытия: **{stairs['landing_sqm']} м²**\n"
                 f"• Основание: {stairs['foundation']}\n"
                 f"• Дефект: {defect_str}\n"
+                f"{layout_str}"
+                f"{slabs_str}"
                 f"{prep_note}\n"
                 f"🛠 **Рекомендуемый заводской комплект C3:**\n"
                 f"• Монолитные Г-образные накладки М1200 / F500 (без шва на ребре)\n"
