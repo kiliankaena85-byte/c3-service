@@ -252,6 +252,7 @@ class GeminiStairVisionEngine:
     """
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
         self.model = "gemini-3.8-flash"
 
     def process_stair_inquiry(self, input_data: Dict[str, Any], laya_triage: Dict[str, Any]) -> Dict[str, Any]:
@@ -292,8 +293,8 @@ class GeminiStairVisionEngine:
         else:
             raw_b64 = image_base64
 
-        # If live Gemini API key is available, pass real image to Gemini Vision
-        if self.api_key:
+        # If live Vision API key (OpenRouter or Google) is available, pass real image to Gemini Vision
+        if self.api_key or self.openrouter_key:
             try:
                 gemini_res = self._call_gemini_vision(raw_b64, input_data, laya_triage, start_time)
                 if gemini_res:
@@ -553,27 +554,219 @@ class GeminiStairVisionEngine:
     def _call_gemini_vision(self, base64_img: str, input_data: Dict[str, Any], laya_triage: Dict[str, Any], start_time: float) -> Optional[Dict[str, Any]]:
         """Live Gemini Multimodal Vision API call with inline image"""
         import requests
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        import json
+
+        openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        google_key = self.api_key or os.getenv("GEMINI_API_KEY")
+
         prompt = (
-            "Ты — ведущий инженер завода уличных лестниц C3 (c3.ru). По присланному фото определи: "
-            "1. Количество ступеней (целое число от 1 до 15). "
-            "2. Примерную ширину лестницы в метрах. "
-            "3. Дефекты текущей лестницы (сколы, трещины швов, скользкая плитка). "
-            "Ответь строго в формате JSON: {\"steps\": 4, \"width_m\": 1.4, \"defects\": [\"...\"]}"
+            "Ты — главный инженер-эксперт завода монолитных ступеней C3 (ООО «ИННОФОРМА», c3.ru).\n"
+            "Внимательно изучи присланную фотографию крыльца/лестницы:\n"
+            "1. Сосчитай точное количество ступеней (не считая верхнюю площадку перед дверью). Считай видимые проступи снизу вверх.\n"
+            "2. Оцени форму конструкции (прямые, угловые L-образные со скосом, радиусные) и наличие перил/ограждений.\n"
+            "3. Оцени материалы: из чего сделаны ступени (террасная доска ДПК, дерево, монолитный бетон, тротуарная плитка, керамогранит, металл).\n"
+            "4. Оцени возможность монтажа монолитных накладок C3 из фибробетона М1200:\n"
+            "   - ВНИМАНИЕ: монтаж монолитных накладок C3 напрямую на доски ДПК или деревянный настил СТРОГО ЗАПРЕЩЕН (доски прогибаются, тяжелый фибробетон треснет). Требуется демонтаж настила и установка сварного регулируемого металлокаркаса C3 на сваях!\n"
+            "   - Если основание бетонное с разрушениями, тоже нужен металлокаркас C3 либо ремонт.\n"
+            "   - Если бетон прочный — разрешен прямой монтаж накладок C3.\n\n"
+            "Ответь строго в формате JSON:\n"
+            "{\n"
+            '  "steps_count": 3,\n'
+            '  "width_m": 1.8,\n'
+            '  "landing_sqm": 1.5,\n'
+            '  "shape": "угловые ступени со скосом",\n'
+            '  "material": "террасная доска ДПК, белые подступенки, перила слева",\n'
+            '  "allow_direct_c3": false,\n'
+            '  "condition_summary": "Крыльцо из ДПК на легком каркасном основании",\n'
+            '  "engineering_recommendation": "Прямой монтаж накладок C3 на настил ДПК запрещен. Требуется установка модульного металлокаркаса C3 на винтовых сваях под накладки.",\n'
+            '  "defects": ["Каркасный настил из ДПК не обладает несущей жесткостью для монолитного бетона C3"],\n'
+            '  "warnings": ["Монтаж монолитного фибробетона C3 на деревянный/композитный каркас запрещен регламентом"]\n'
+            "}"
         )
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"inline_data": {"mime_type": "image/jpeg", "data": base64_img}},
-                    {"text": prompt}
-                ]
-            }]
+
+        parsed_data = None
+
+        # 1. Try OpenRouter Gemini Vision
+        if openrouter_key:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {openrouter_key}",
+                    "HTTP-Referer": "https://c3.ru",
+                    "X-Title": "C3 AI Engine",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "google/gemini-2.5-flash",
+                    "max_tokens": 1200,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}}
+                            ]
+                        }
+                    ],
+                    "response_format": {"type": "json_object"}
+                }
+                r = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload, timeout=25)
+                if r.status_code == 200:
+                    raw_content = r.json()["choices"][0]["message"]["content"]
+                    parsed_data = json.loads(raw_content)
+                    print(f"[GEMINI VISION] OpenRouter success: steps={parsed_data.get('steps_count')}, mat={parsed_data.get('material')}")
+            except Exception as e:
+                print(f"[GEMINI VISION] OpenRouter attempt failed: {e}")
+
+        # 2. Try Google Native Interactions API as fallback if OpenRouter didn't return
+        if not parsed_data and google_key:
+            try:
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": google_key,
+                    "Api-Revision": "2026-05-20"
+                }
+                payload = {
+                    "model": "gemini-3.8-flash",
+                    "input": [
+                        {"type": "image", "data": base64_img, "mime_type": "image/jpeg"},
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+                r = requests.post("https://generativelanguage.googleapis.com/v1beta/interactions", headers=headers, json=payload, timeout=25)
+                if r.status_code == 200:
+                    text_out = r.json().get("output_text") or ""
+                    s = text_out.find("{")
+                    e = text_out.rfind("}")
+                    if s != -1 and e != -1:
+                        parsed_data = json.loads(text_out[s:e+1])
+                        print(f"[GEMINI VISION] Google Interactions success: steps={parsed_data.get('steps_count')}")
+            except Exception as e:
+                print(f"[GEMINI VISION] Google attempt failed: {e}")
+
+        if not parsed_data:
+            return None
+
+        # Build full high-precision C3 engineering response from real vision analysis
+        steps_count = int(parsed_data.get("steps_count") or 3)
+        stair_width_m = float(parsed_data.get("width_m") or 1.8)
+        landing_area_sqm = float(parsed_data.get("landing_sqm") or 1.5)
+        detected_mat = parsed_data.get("material") or "Каркасное крыльцо"
+        shape = parsed_data.get("shape") or "Прямая"
+        allow_direct = bool(parsed_data.get("allow_direct_c3", False))
+        defects = parsed_data.get("defects") or ["Несущая способность основания требует проверки"]
+        warnings = parsed_data.get("warnings") or []
+        condition_summary = parsed_data.get("condition_summary") or "Основание лестницы"
+        recommendation = parsed_data.get("engineering_recommendation") or "Установка металлокаркаса C3"
+
+        # Calculate materials and prices
+        step_model = C3_SPECS["standard_step"]
+        steps_total = steps_count * step_model["retail_price_rub"]
+        steps_cogs = steps_count * step_model["cogs_rub"]
+
+        slabs_cost = int(landing_area_sqm * C3_SPECS["flat_slab"]["retail_price_sqm_rub"])
+        slabs_cogs = int(landing_area_sqm * C3_SPECS["flat_slab"]["cogs_sqm_rub"])
+
+        adhesive_bags = max(2, int((steps_count + landing_area_sqm) / 3))
+        adhesive_cost = adhesive_bags * C3_SPECS["adhesive"]["retail_price_rub"]
+        adhesive_cogs = adhesive_bags * C3_SPECS["adhesive"]["cogs_rub"]
+
+        sealant_tubes = max(1, int(steps_count / 3))
+        sealant_cost = sealant_tubes * C3_SPECS["sealant"]["retail_price_rub"]
+        sealant_cogs = sealant_tubes * C3_SPECS["sealant"]["cogs_rub"]
+
+        hydro_cost = C3_SPECS["hydrophobizer"]["retail_price_rub"]
+        hydro_cogs = C3_SPECS["hydrophobizer"]["cogs_rub"]
+
+        items = [
+            {
+                "name": f"{step_model['name']} (Габбро-диабаз, рельеф Волна R13, форма: {shape})",
+                "quantity": f"{steps_count} шт.",
+                "unit_price": step_model["retail_price_rub"],
+                "total_price": steps_total,
+                "cogs_total": steps_cogs
+            },
+            {
+                "name": f"Плиты C3 для площадки ({landing_area_sqm} м²)",
+                "quantity": f"{landing_area_sqm} м²",
+                "unit_price": C3_SPECS["flat_slab"]["retail_price_sqm_rub"],
+                "total_price": slabs_cost,
+                "cogs_total": slabs_cogs
+            },
+            {
+                "name": C3_SPECS["adhesive"]["name"],
+                "quantity": f"{adhesive_bags} меш.",
+                "unit_price": C3_SPECS["adhesive"]["retail_price_rub"],
+                "total_price": adhesive_cost,
+                "cogs_total": adhesive_cogs
+            },
+            {
+                "name": C3_SPECS["sealant"]["name"],
+                "quantity": f"{sealant_tubes} шт.",
+                "unit_price": C3_SPECS["sealant"]["retail_price_rub"],
+                "total_price": sealant_cost,
+                "cogs_total": sealant_cogs
+            },
+            {
+                "name": C3_SPECS["hydrophobizer"]["name"],
+                "quantity": "1 кан. (5 л)",
+                "unit_price": hydro_cost,
+                "total_price": hydro_cost,
+                "cogs_total": hydro_cogs
+            }
+        ]
+
+        total_retail = steps_total + slabs_cost + adhesive_cost + sealant_cost + hydro_cost
+        total_cogs = steps_cogs + slabs_cogs + adhesive_cogs + sealant_cogs + hydro_cogs
+        gross_profit = total_retail - total_cogs
+        margin_percent = round((gross_profit / total_retail) * 100, 1)
+
+        tile_initial = int(total_retail * 0.70)
+        tco_savings = int(tile_initial * 2.8 - total_retail)
+
+        foundation_eval = {
+            "status": "APPROVED" if allow_direct else "CRITICAL_RECONSTRUCTION",
+            "health_score": 90 if allow_direct else 25,
+            "allow_direct_c3": allow_direct,
+            "warnings": warnings if warnings else (defects if not allow_direct else []),
+            "recommended_action": recommendation,
+            "alternative_solution": "Модульный регулируемый металлокаркас C3 на сваях под накладки" if not allow_direct else "Прямой монтаж C3"
         }
-        resp = requests.post(url, headers={"Content-Type": "application/json"}, json=payload, timeout=12)
-        if resp.status_code == 200:
-            # parse response
-            pass
-        return None
+
+        elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
+
+        return {
+            "status": "SUCCESS",
+            "gemini_latency_ms": elapsed_ms,
+            "detected_stairs": {
+                "steps_count": steps_count,
+                "width_m": stair_width_m,
+                "landing_sqm": landing_area_sqm,
+                "foundation": f"{detected_mat} ({shape})",
+                "defects": defects,
+                "foundation_assessment": foundation_eval
+            },
+            "engineering_solution": {
+                "product_type": "Монолитные накладки C3 без шва" if allow_direct else "Модульный металлокаркас C3 + накладки",
+                "surface_color": "Габбро-диабаз (Графит)",
+                "relief_pattern": "Волна R13",
+                "spec_items": items,
+                "total_retail_price_rub": total_retail,
+                "total_cogs_rub": total_cogs,
+                "factory_gross_profit_rub": gross_profit,
+                "factory_margin_percent": margin_percent,
+                "tco_savings_10yr_rub": tco_savings
+            },
+            "personalized_outreach_message": f"Расчет входной группы C3 ({steps_count} ст.): {total_retail:,} руб.",
+            "crm_integration_card": {
+                "deal_title": f"C3 Заказ по фото ({steps_count} ст., {shape}, ~{total_retail:,} руб.)",
+                "lead_temperature": "HOT (🔥 Точный расчет Gemini Vision)",
+                "urgency": "4/4",
+                "estimated_deal_value_rub": total_retail + (0 if allow_direct else 85000),
+                "estimated_factory_gross_profit_rub": gross_profit + (0 if allow_direct else 45000),
+                "factory_margin_pct": f"{margin_percent}%",
+                "recommended_sales_action": "Предложить металлокаркас C3" if not allow_direct else "Согласовать дату монтажа накладок"
+            }
+        }
 
     def _generate_c3_engineering_solution(self, input_data: Dict[str, Any], preset_id: str, text: str, segment: str, urgency: int, start_time: float) -> Dict[str, Any]:
         """
