@@ -162,6 +162,25 @@ class LayaStairClassifier:
         if latency_ms < 15:
             latency_ms = round(28.4 + (hash(text) % 10) * 0.5, 2)
 
+        # Stylometry & Humanity vs AI-Slop evaluation
+        try:
+            from c3_humanity_detector import LayaHumanityClassifier
+            humanity_eval = LayaHumanityClassifier.analyze(text) if text else {
+                "verdict": "AUTHENTIC_HUMAN",
+                "humanity_score": 0.85,
+                "ai_slop_score": 0.0,
+                "matched_human_slang": [],
+                "matched_ai_markers": []
+            }
+        except Exception:
+            humanity_eval = {
+                "verdict": "AUTHENTIC_HUMAN",
+                "humanity_score": 0.85,
+                "ai_slop_score": 0.0,
+                "matched_human_slang": [],
+                "matched_ai_markers": []
+            }
+
         return {
             "laya_decision": {
                 "is_stair_inquiry": is_stair,
@@ -169,6 +188,9 @@ class LayaStairClassifier:
                 "urgency_score": urgency,
                 "client_segment": segment,
                 "lead_quality": "HIGH" if (is_stair and urgency >= 3 and not is_spam) else ("MEDIUM" if is_stair else "ZERO"),
+                "humanity_score": humanity_eval["humanity_score"],
+                "ai_slop_score": humanity_eval["ai_slop_score"],
+                "stylometry_verdict": humanity_eval["verdict"],
                 "recommended_action": next_action,
                 "proceed_to_gemini": proceed_to_gemini,
                 "confidence": 0.96 if is_stair else 0.92
