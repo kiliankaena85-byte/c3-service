@@ -193,7 +193,9 @@ def get_db():
     if db_url:
         try:
             import psycopg2
-            return psycopg2.connect(db_url)
+            conn = psycopg2.connect(db_url)
+            conn.set_client_encoding('UTF8')
+            return conn
         except Exception as e:
             print(f"[DB Server] Connect error: {e}")
     return None
@@ -228,7 +230,7 @@ async def api_get_tasks(request):
                     "due_at": r[4].isoformat() if r[4] else None,
                     "remind_at": r[5].isoformat() if r[5] else None,
                     "status": r[6],
-                    "target_channels": r[7] if len(r) > 7 else []
+                    "target_channels": r[7] if len(r) > 7 and r[7] else ['telegram']
                 })
             return JSONResponse(tasks)
     finally:
@@ -272,23 +274,47 @@ async def api_postpone_task(request):
         conn.close()
 
 
-async def api_create_task(request):
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    title = body.get("title", "Новая задача")
-    category = body.get("category", "Личные дела")
+async def api_delete_task(request):
+    task_id = request.path_params.get("task_id")
     conn = get_db()
     if not conn:
         return JSONResponse({"status": "error"})
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO user_tasks (user_id, title, raw_input, category, due_at, remind_at)
-                VALUES (268747191, %s, %s, %s, NOW() + INTERVAL '2 hour', NOW() + INTERVAL '1 hour')
-                RETURNING id;
-            """, (title, title, category))
+            cur.execute("DELETE FROM user_tasks WHERE id = %s;", (task_id,))
+            conn.commit()
+            return JSONResponse({"status": "ok"})
+    finally:
+        conn.close()
+
+
+async def api_create_task(request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    title = body.get("title", "Новая задача").strip()
+    category = body.get("category", "Работа / Заказчики")
+    priority = body.get("priority", "medium")
+    due_at = body.get("due_at")
+    
+    conn = get_db()
+    if not conn:
+        return JSONResponse({"status": "error"})
+    try:
+        with conn.cursor() as cur:
+            if due_at:
+                cur.execute("""
+                    INSERT INTO user_tasks (user_id, title, raw_input, category, priority, due_at, remind_at, target_channels)
+                    VALUES (268747191, %s, %s, %s, %s, %s, %s - INTERVAL '15 minutes', ARRAY['telegram', 'samsung_calendar'])
+                    RETURNING id;
+                """, (title, title, category, priority, due_at, due_at))
+            else:
+                cur.execute("""
+                    INSERT INTO user_tasks (user_id, title, raw_input, category, priority, due_at, remind_at, target_channels)
+                    VALUES (268747191, %s, %s, %s, %s, NOW() + INTERVAL '2 hour', NOW() + INTERVAL '1 hour', ARRAY['telegram', 'samsung_calendar'])
+                    RETURNING id;
+                """, (title, title, category, priority))
             tid = cur.fetchone()[0]
             conn.commit()
             return JSONResponse({"status": "ok", "task_id": tid})
@@ -311,6 +337,7 @@ routes = [
     Route("/api/tasks", endpoint=api_create_task, methods=["POST"]),
     Route("/api/tasks/{task_id}/toggle", endpoint=api_toggle_task, methods=["POST"]),
     Route("/api/tasks/{task_id}/postpone", endpoint=api_postpone_task, methods=["POST"]),
+    Route("/api/tasks/{task_id}", endpoint=api_delete_task, methods=["DELETE"]),
     Route("/api/max/digest", endpoint=api_max_digest, methods=["GET"]),
     Route("/api/analyze", endpoint=api_analyze, methods=["POST"]),
     Route("/api/roi", endpoint=api_roi, methods=["POST"]),

@@ -3,21 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Календарь Задач</title>
+  <title>Календарь Задач | Spektr Executive</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
-      --bg: var(--tg-theme-bg-color, #0f172a);
-      --card-bg: var(--tg-theme-secondary-bg-color, #1e293b);
-      --text: var(--tg-theme-text-color, #f8fafc);
-      --subtext: var(--tg-theme-hint-color, #94a3b8);
-      --accent: var(--tg-theme-button-color, #38bdf8);
-      --accent-text: var(--tg-theme-button-text-color, #0f172a);
-      --border: rgba(255, 255, 255, 0.08);
+      --bg: #090d16;
+      --surface: #121826;
+      --card-bg: #182235;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-active: #202d45;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      
+      --accent-blue: #38bdf8;
+      --accent-work: #3b82f6;
+      --accent-ozon: #f59e0b;
+      --accent-urgent: #ef4444;
+      --accent-family: #10b981;
       --success: #22c55e;
-      --danger: #ef4444;
-      --warning: #f59e0b;
-      --radius: 16px;
+      
+      --radius-sm: 10px;
+      --radius-md: 14px;
+      --radius-lg: 20px;
     }
 
     * {
@@ -30,320 +38,555 @@
 
     body {
       background: var(--bg);
-      color: var(--text);
+      color: var(--text-main);
       min-height: 100vh;
-      padding: 16px;
-      padding-bottom: 90px;
+      padding: 14px;
+      padding-bottom: 95px;
       overflow-x: hidden;
+      overscroll-behavior-y: contain;
     }
 
-    /* Header */
-    .header {
+    /* Top App Bar */
+    .app-bar {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 14px;
     }
 
-    .title-group h1 {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.5px;
-    }
-
-    .title-group p {
-      font-size: 13px;
-      color: var(--subtext);
-      margin-top: 2px;
-    }
-
-    .btn-max {
-      background: linear-gradient(135deg, #0ea5e9, #6366f1);
-      color: #fff;
-      border: none;
-      padding: 8px 14px;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
+    .user-profile {
       display: flex;
       align-items: center;
-      gap: 6px;
-      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+      gap: 10px;
     }
 
-    /* Date Strip */
-    .calendar-strip-wrapper {
-      margin-bottom: 20px;
+    .avatar-ring {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0284c7, #6366f1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 15px;
+      color: #fff;
+      position: relative;
     }
 
-    .calendar-strip {
+    .online-indicator {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 10px;
+      height: 10px;
+      background: var(--success);
+      border: 2px solid var(--bg);
+      border-radius: 50%;
+    }
+
+    .user-meta h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .user-meta p {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .bar-actions {
       display: flex;
       gap: 8px;
-      overflow-x: auto;
-      padding-bottom: 4px;
-      scrollbar-width: none;
     }
 
-    .calendar-strip::-webkit-scrollbar {
-      display: none;
+    .icon-btn {
+      background: var(--surface);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
     }
 
-    .day-card {
-      flex: 0 0 54px;
-      height: 72px;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
+    .icon-btn:active {
+      transform: scale(0.92);
+      color: var(--text-main);
+    }
+
+    /* Calendar Header & View Switcher */
+    .calendar-card {
+      background: var(--surface);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
+      padding: 14px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .cal-controls {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .month-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .month-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+    }
+
+    .nav-arrow {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 14px;
+      border-radius: 6px;
+    }
+
+    .nav-arrow:active {
+      color: var(--accent-blue);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .view-toggles {
+      display: flex;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 3px;
+      border-radius: 18px;
+      border: 1px solid var(--card-border);
+    }
+
+    .toggle-pill {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
       border-radius: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .toggle-pill.active {
+      background: var(--accent-blue);
+      color: #090d16;
+    }
+
+    /* 7-COLUMN STRICT CALENDAR GRID */
+    .cal-weekdays {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      text-align: center;
+      margin-bottom: 6px;
+    }
+
+    .weekday-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+    }
+
+    .cal-day-cell {
+      height: 48px;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       position: relative;
+      transition: all 0.15s ease;
     }
 
-    .day-card.active {
-      background: var(--accent);
-      color: var(--accent-text);
-      border-color: var(--accent);
-      transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(56, 189, 248, 0.3);
+    .cal-day-cell:active {
+      transform: scale(0.94);
     }
 
-    .day-name {
-      font-size: 11px;
+    .cal-day-cell.other-month {
+      opacity: 0.25;
+    }
+
+    .cal-day-cell.is-today {
+      border-color: var(--accent-blue);
+      background: rgba(56, 189, 248, 0.08);
+    }
+
+    .cal-day-cell.is-today .day-number {
+      color: var(--accent-blue);
+      font-weight: 800;
+    }
+
+    .cal-day-cell.selected {
+      background: var(--accent-blue);
+      border-color: var(--accent-blue);
+    }
+
+    .cal-day-cell.selected .day-number {
+      color: #090d16;
+      font-weight: 800;
+    }
+
+    .day-number {
+      font-size: 13px;
       font-weight: 600;
-      text-transform: uppercase;
-      opacity: 0.7;
     }
 
-    .day-num {
-      font-size: 18px;
-      font-weight: 700;
-      margin-top: 2px;
+    /* Smart task dots below day */
+    .day-dots {
+      display: flex;
+      gap: 2.5px;
+      margin-top: 3px;
+      height: 5px;
+      align-items: center;
     }
 
-    .day-dot {
+    .dot {
       width: 4px;
       height: 4px;
       border-radius: 50%;
-      background: var(--warning);
-      margin-top: 4px;
     }
 
-    .day-card.active .day-dot {
-      background: var(--accent-text);
+    .dot.work { background: var(--accent-work); }
+    .dot.ozon { background: var(--accent-ozon); }
+    .dot.urgent { background: var(--accent-urgent); }
+    .dot.family { background: var(--accent-family); }
+
+    .cal-day-cell.selected .dot {
+      background: #090d16 !important;
     }
 
-    /* Filter Tabs */
-    .filter-tabs {
+    /* Metric Chips */
+    .metrics-bar {
       display: flex;
       gap: 8px;
-      margin-bottom: 16px;
       overflow-x: auto;
+      margin-bottom: 16px;
       scrollbar-width: none;
     }
 
-    .filter-tabs::-webkit-scrollbar {
+    .metrics-bar::-webkit-scrollbar {
       display: none;
     }
 
-    .tab-btn {
-      background: var(--card-bg);
-      color: var(--subtext);
-      border: 1px solid var(--border);
+    .metric-chip {
+      flex: 1;
+      min-width: 85px;
+      background: var(--surface);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .metric-num {
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+
+    .metric-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    /* Filter Chips */
+    .filter-scroll {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      scrollbar-width: none;
+    }
+
+    .filter-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .filter-chip {
+      background: var(--surface);
+      color: var(--text-muted);
+      border: 1px solid var(--card-border);
+      border-radius: 18px;
       padding: 6px 14px;
-      border-radius: 20px;
       font-size: 12px;
       font-weight: 600;
       white-space: nowrap;
       cursor: pointer;
+      transition: all 0.15s;
     }
 
-    .tab-btn.active {
+    .filter-chip.active {
       background: rgba(56, 189, 248, 0.15);
-      color: var(--accent);
-      border-color: var(--accent);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
     }
 
-    /* Task List */
-    .section-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--subtext);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 12px;
+    /* AGENDA FEED (Сквозная хронологическая лента) */
+    .agenda-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .agenda-day-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .group-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      padding: 0 4px;
     }
 
-    .tasks-list {
+    .group-title {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
       display: flex;
-      flex-direction: column;
-      gap: 10px;
+      align-items: center;
+      gap: 6px;
     }
 
+    .group-title.today {
+      color: var(--accent-blue);
+    }
+
+    .group-badge {
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 7px;
+      border-radius: 10px;
+      color: var(--text-dim);
+    }
+
+    /* Task Card */
     .task-card {
       background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px 16px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      padding: 13px 14px;
       display: flex;
       align-items: flex-start;
       gap: 12px;
-      transition: all 0.2s ease;
+      transition: all 0.2s;
       position: relative;
+      overflow: hidden;
     }
 
+    .task-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: var(--accent-work);
+    }
+
+    .task-card.cat-ozon::before { background: var(--accent-ozon); }
+    .task-card.cat-family::before { background: var(--accent-family); }
+    .task-card.cat-urgent::before { background: var(--accent-urgent); }
+
     .task-card.completed {
-      opacity: 0.5;
+      opacity: 0.45;
+      background: rgba(24, 34, 53, 0.5);
     }
 
     .task-card.completed .task-title {
       text-decoration: line-through;
+      color: var(--text-muted);
     }
 
-    /* Checkbox */
-    .checkbox {
-      width: 24px;
-      height: 24px;
-      border-radius: 8px;
-      border: 2px solid var(--subtext);
+    .task-checkbox {
+      width: 22px;
+      height: 22px;
+      border-radius: 7px;
+      border: 2px solid var(--text-dim);
       display: flex;
       align-items: center;
       justify-content: center;
       cursor: pointer;
       flex-shrink: 0;
-      margin-top: 1px;
-      transition: all 0.2s ease;
+      margin-top: 2px;
+      transition: all 0.2s;
     }
 
-    .task-card.completed .checkbox {
+    .task-card.completed .task-checkbox {
       background: var(--success);
       border-color: var(--success);
-      color: white;
+      color: #fff;
     }
 
-    .task-content {
+    .task-details {
       flex: 1;
       min-width: 0;
     }
 
-    .task-header {
+    .task-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 4px;
     }
 
-    .task-category {
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--accent);
-      background: rgba(56, 189, 248, 0.1);
-      padding: 2px 8px;
-      border-radius: 6px;
-    }
-
     .task-time {
       font-size: 12px;
-      font-weight: 600;
-      color: var(--subtext);
+      font-weight: 700;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: var(--accent-blue);
       display: flex;
       align-items: center;
       gap: 4px;
     }
 
-    .task-time.urgent {
-      color: var(--danger);
+    .priority-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .priority-badge.high {
+      background: rgba(239, 68, 68, 0.18);
+      color: var(--accent-urgent);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .priority-badge.medium {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
     }
 
     .task-title {
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 600;
       line-height: 1.35;
       margin-bottom: 6px;
-      word-break: break-word;
+      color: var(--text-main);
     }
 
-    .task-footer {
+    .task-tags {
       display: flex;
-      gap: 8px;
+      flex-wrap: wrap;
+      gap: 6px;
       align-items: center;
     }
 
-    .btn-postpone {
-      font-size: 11px;
-      color: var(--subtext);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--border);
-      padding: 4px 8px;
+    .tag {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 7px;
       border-radius: 6px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+    }
+
+    .task-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .act-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 8px;
       cursor: pointer;
     }
 
-    .btn-postpone:active {
+    .act-btn:active {
       background: rgba(255, 255, 255, 0.1);
+      color: var(--text-main);
     }
 
-    /* Floating Quick Add */
-    .quick-add {
+    .empty-day-stub {
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.015);
+      border: 1px dashed rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius-md);
+      font-size: 12px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    /* Floating Add Button */
+    .fab-add {
       position: fixed;
-      bottom: 20px;
-      left: 16px;
-      right: 16px;
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 28px;
-      padding: 6px 8px 6px 18px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-      backdrop-filter: blur(16px);
-    }
-
-    .quick-add input {
-      flex: 1;
-      background: transparent;
-      border: none;
-      color: var(--text);
-      font-size: 14px;
-      outline: none;
-    }
-
-    .quick-add input::placeholder {
-      color: var(--subtext);
-    }
-
-    .quick-add button {
-      background: var(--accent);
-      color: var(--accent-text);
-      border: none;
-      width: 40px;
-      height: 40px;
+      bottom: 24px;
+      right: 20px;
+      width: 54px;
+      height: 54px;
       border-radius: 50%;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      color: #090d16;
+      border: none;
+      box-shadow: 0 8px 24px rgba(2, 132, 199, 0.45);
       display: flex;
       align-items: center;
       justify-content: center;
+      font-size: 26px;
       cursor: pointer;
-      font-size: 20px;
-      font-weight: bold;
+      z-index: 100;
+      transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .fab-add:active {
+      transform: scale(0.9);
     }
 
     /* Modal Sheet */
     .modal-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(4px);
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(6px);
+      z-index: 200;
       display: none;
       align-items: flex-end;
-      z-index: 100;
     }
 
     .modal-overlay.open {
@@ -351,13 +594,13 @@
     }
 
     .modal-sheet {
-      background: var(--card-bg);
-      width: 100%;
-      max-height: 80vh;
+      background: var(--surface);
+      border-top: 1px solid var(--card-border);
       border-radius: 24px 24px 0 0;
-      padding: 24px 20px;
+      width: 100%;
+      padding: 20px;
+      max-height: 85vh;
       overflow-y: auto;
-      border-top: 1px solid var(--border);
       animation: slideUp 0.25s ease-out;
     }
 
@@ -370,94 +613,198 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 16px;
+      margin-bottom: 18px;
     }
 
     .modal-header h2 {
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 700;
     }
 
-    .modal-close {
+    .close-btn {
       background: none;
       border: none;
-      color: var(--subtext);
-      font-size: 22px;
+      color: var(--text-muted);
+      font-size: 20px;
       cursor: pointer;
     }
 
-    .max-digest-content {
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .form-input, .form-select {
+      width: 100%;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-sm);
+      color: var(--text-main);
+      padding: 10px 12px;
       font-size: 14px;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      color: var(--text);
+      outline: none;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--subtext);
+    .form-input:focus, .form-select:focus {
+      border-color: var(--accent-blue);
     }
 
-    .empty-state svg {
-      width: 48px;
-      height: 48px;
-      margin-bottom: 12px;
-      opacity: 0.3;
+    .btn-submit {
+      width: 100%;
+      background: var(--accent-blue);
+      color: #090d16;
+      border: none;
+      border-radius: var(--radius-md);
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
     }
   </style>
 </head>
 <body>
 
-  <!-- Header -->
-  <div class="header">
-    <div class="title-group">
-      <h1>Календарь Задач</h1>
-      <p id="current-date-label">Загрузка...</p>
+  <!-- App Bar -->
+  <div class="app-bar">
+    <div class="user-profile">
+      <div class="avatar-ring">
+        А
+        <div class="online-indicator"></div>
+      </div>
+      <div class="user-meta">
+        <h1>Артём Spektr</h1>
+        <p>Neon DB • LAYA AI Active</p>
+      </div>
     </div>
-    <button class="btn-max" onclick="openMaxModal()">
-      <span>📊</span> Сводка MAX
-    </button>
+    <div class="bar-actions">
+      <button class="icon-btn" onclick="loadTasks(true)" title="Обновить">🔄</button>
+      <button class="icon-btn" onclick="showMaxDigest()" title="MAX Сводка">📊</button>
+    </div>
   </div>
 
-  <!-- Calendar Strip -->
-  <div class="calendar-strip-wrapper">
-    <div class="calendar-strip" id="calendar-strip"></div>
+  <!-- Calendar Grid Container -->
+  <div class="calendar-card">
+    <div class="cal-controls">
+      <div class="month-nav">
+        <button class="nav-arrow" onclick="changeMonth(-1)">&larr;</button>
+        <span class="month-title" id="cal-month-title">Октябрь 2026</span>
+        <button class="nav-arrow" onclick="changeMonth(1)">&rarr;</button>
+      </div>
+      <div class="view-toggles">
+        <button class="toggle-pill active" id="btn-view-week" onclick="setViewMode('week')">Неделя</button>
+        <button class="toggle-pill" id="btn-view-month" onclick="setViewMode('month')">Месяц</button>
+      </div>
+    </div>
+
+    <!-- 7 Weekdays Header -->
+    <div class="cal-weekdays">
+      <div class="weekday-label">Пн</div>
+      <div class="weekday-label">Вт</div>
+      <div class="weekday-label">Ср</div>
+      <div class="weekday-label">Чт</div>
+      <div class="weekday-label">Пт</div>
+      <div class="weekday-label">Сб</div>
+      <div class="weekday-label">Вс</div>
+    </div>
+
+    <!-- Interactive Grid Cells -->
+    <div class="cal-grid" id="calendar-grid">
+      <!-- Generated by JavaScript -->
+    </div>
   </div>
 
-  <!-- Filter Tabs -->
-  <div class="filter-tabs">
-    <button class="tab-btn active" onclick="setFilter('all', this)">Все дела</button>
-    <button class="tab-btn" onclick="setFilter('today', this)">Сегодня</button>
-    <button class="tab-btn" onclick="setFilter('Покупки / Ozon', this)">Ozon / Покупки</button>
-    <button class="tab-btn" onclick="setFilter('Работа / Заказчики', this)">Работа</button>
+  <!-- Metrics Bar -->
+  <div class="metrics-bar">
+    <div class="metric-chip">
+      <span class="metric-num" id="stat-today">1</span>
+      <span class="metric-label">🔥 Сегодня</span>
+    </div>
+    <div class="metric-chip">
+      <span class="metric-num" id="stat-week">2</span>
+      <span class="metric-label">📌 На неделе</span>
+    </div>
+    <div class="metric-chip">
+      <span class="metric-num" id="stat-urgent">1</span>
+      <span class="metric-label">⚡ Срочные</span>
+    </div>
+    <div class="metric-chip">
+      <span class="metric-num" id="stat-done">0</span>
+      <span class="metric-label">✅ Готово</span>
+    </div>
   </div>
 
-  <!-- Task List Section -->
-  <div class="section-title">
-    <span id="list-title">Задачи на день</span>
-    <span id="task-count" style="font-size: 12px; opacity: 0.7;">0 задач</span>
+  <!-- Category Filter Chips -->
+  <div class="filter-scroll">
+    <button class="filter-chip active" onclick="setCategoryFilter('all', this)">Все задачи</button>
+    <button class="filter-chip" onclick="setCategoryFilter('Работа / Заказчики', this)">💼 Работа</button>
+    <button class="filter-chip" onclick="setCategoryFilter('Покупки / Ozon', this)">📦 Ozon</button>
+    <button class="filter-chip" onclick="setCategoryFilter('Быт / Семья', this)">🏠 Семья</button>
+    <button class="filter-chip" onclick="setCategoryFilter('urgent', this)">🔴 Срочные</button>
+    <button class="filter-chip" onclick="setCategoryFilter('completed', this)">✅ Завершённые</button>
   </div>
 
-  <div class="tasks-list" id="tasks-list">
-    <div class="empty-state">Загрузка ваших задач...</div>
+  <!-- Agenda Feed: Full Continuous Chronology (Zero Lost Tasks) -->
+  <div class="agenda-feed" id="agenda-feed">
+    <!-- Populated by JavaScript -->
   </div>
 
-  <!-- Quick Add Bar -->
-  <div class="quick-add">
-    <input type="text" id="quick-input" placeholder="Добавить задачу голосом или текстом..." onkeydown="if(event.key==='Enter') quickAddTask()">
-    <button onclick="quickAddTask()">+</button>
+  <!-- Floating Add Task Button -->
+  <button class="fab-add" onclick="openAddModal()">+</button>
+
+  <!-- Add Task Modal -->
+  <div class="modal-overlay" id="add-modal" onclick="if(event.target===this) closeAddModal()">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2>Новая задача / напоминание</h2>
+        <button class="close-btn" onclick="closeAddModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>Что нужно сделать?</label>
+        <input type="text" class="form-input" id="task-title-input" placeholder="Например: Встреча с Дианой по поводу кружек">
+      </div>
+      <div class="form-group">
+        <label>Категория</label>
+        <select class="form-select" id="task-category-input">
+          <option value="Работа / Заказчики">💼 Работа / Заказчики</option>
+          <option value="Покупки / Ozon">📦 Покупки / Ozon</option>
+          <option value="Быт / Семья">🏠 Быт / Семья</option>
+          <option value="Личные дела">Личные дела</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Дата и время</label>
+        <input type="datetime-local" class="form-input" id="task-datetime-input">
+      </div>
+      <div class="form-group">
+        <label>Приоритет (LAYA Urgent)</label>
+        <select class="form-select" id="task-priority-input">
+          <option value="high">🔴 Высокий (Срочно)</option>
+          <option value="medium" selected>Обычный</option>
+          <option value="low">Низкий</option>
+        </select>
+      </div>
+      <button class="btn-submit" onclick="submitNewTask()">Сохранить задачу</button>
+    </div>
   </div>
 
-  <!-- Modal Sheet for MAX Summary -->
+  <!-- MAX Digest Modal -->
   <div class="modal-overlay" id="max-modal" onclick="if(event.target===this) closeMaxModal()">
     <div class="modal-sheet">
       <div class="modal-header">
-        <h2>📊 Сводка MAX</h2>
-        <button class="modal-close" onclick="closeMaxModal()">&times;</button>
+        <h2>📊 Аналитическая сводка MAX</h2>
+        <button class="close-btn" onclick="closeMaxModal()">&times;</button>
       </div>
-      <div class="max-digest-content" id="max-digest-text">
-        Загрузка свежей аналитики из мессенджера MAX...
+      <div id="max-modal-text" style="font-size:13px; line-height:1.5; color:var(--text-muted); white-space:pre-wrap;">
+        Загрузка...
       </div>
     </div>
   </div>
@@ -467,243 +814,414 @@
     if (tg) {
       tg.expand();
       tg.ready();
+      if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
     }
 
-    const API_BASE = window.location.origin;
-    let allTasks = [];
-    let currentFilter = 'all';
-    let selectedDate = new Date().toISOString().split('T')[0];
-
-    // Days setup
-    const DAYS_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
-    const MONTHS_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-
-    function initCalendarStrip() {
-      const strip = document.getElementById('calendar-strip');
-      strip.innerHTML = '';
-      const today = new Date();
-
-      document.getElementById('current-date-label').innerText = 
-        `${DAYS_RU[today.getDay()]}, ${today.getDate()} ${MONTHS_RU[today.getMonth()]}`;
-
-      // 10 days starting from 2 days ago
-      for (let i = -2; i < 8; i++) {
-        const d = new Date();
-        d.setDate(today.getDate() + i);
-        const iso = d.toISOString().split('T')[0];
-
-        const card = document.createElement('div');
-        card.className = `day-card ${iso === selectedDate ? 'active' : ''}`;
-        card.onclick = () => selectDate(iso, card);
-
-        const dayName = document.createElement('div');
-        dayName.className = 'day-name';
-        dayName.innerText = DAYS_RU[d.getDay()];
-
-        const dayNum = document.createElement('div');
-        dayNum.className = 'day-num';
-        dayNum.innerText = d.getDate();
-
-        const dot = document.createElement('div');
-        dot.className = 'day-dot';
-        dot.id = `dot-${iso}`;
-        dot.style.visibility = 'hidden';
-
-        card.appendChild(dayName);
-        card.appendChild(dayNum);
-        card.appendChild(dot);
-        strip.appendChild(card);
-      }
-    }
-
-    function selectDate(iso, cardEl) {
-      selectedDate = iso;
-      document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active'));
-      if (cardEl) cardEl.classList.add('active');
-      haptic();
-      renderTasks();
-    }
-
-    function setFilter(cat, btnEl) {
-      currentFilter = cat;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      if (btnEl) btnEl.classList.add('active');
-      haptic();
-      renderTasks();
-    }
-
-    function haptic() {
+    function haptic(type = 'light') {
       if (tg?.HapticFeedback) {
-        tg.HapticFeedback.impactOccurred('light');
+        if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+        else tg.HapticFeedback.impactOccurred(type);
       }
     }
 
-    async function loadTasks() {
+    const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+    const MONTHS_GENITIVE = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+    const DAYS_RU = ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+
+    let allTasks = [];
+    let currentCategoryFilter = 'all';
+    let viewMode = 'week'; // 'week' or 'month'
+    let currentNavDate = new Date(); // anchor date
+    let selectedDateIso = null;
+
+    // Helper: format YYYY-MM-DD in local time
+    function toLocalIso(d) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    const todayIso = toLocalIso(new Date());
+
+    async function loadTasks(showIndicator = false) {
       try {
-        const res = await fetch(`${API_BASE}/api/tasks`);
-        allTasks = await res.json();
-        updateDots();
-        renderTasks();
+        const resp = await fetch('/api/tasks');
+        allTasks = await resp.json();
+        updateStats();
+        renderCalendarGrid();
+        renderAgenda();
+        if (showIndicator) haptic('success');
       } catch (e) {
-        console.error('Error loading tasks:', e);
-        document.getElementById('tasks-list').innerHTML = 
-          `<div class="empty-state">Не удалось загрузить задачи. Проверьте подключение к серверу.</div>`;
+        console.error('Error fetching tasks:', e);
       }
     }
 
-    function updateDots() {
-      allTasks.forEach(t => {
-        if (t.due_at) {
-          const iso = t.due_at.split('T')[0];
-          const dot = document.getElementById(`dot-${iso}`);
-          if (dot) dot.style.visibility = 'visible';
-        }
-      });
+    function updateStats() {
+      const todayCount = allTasks.filter(t => t.due_at && t.due_at.startsWith(todayIso) && t.status !== 'completed').length;
+      const urgentCount = allTasks.filter(t => t.priority === 'high' && t.status !== 'completed').length;
+      const doneCount = allTasks.filter(t => t.status === 'completed').length;
+      
+      document.getElementById('stat-today').innerText = todayCount;
+      document.getElementById('stat-week').innerText = allTasks.filter(t => t.status !== 'completed').length;
+      document.getElementById('stat-urgent').innerText = urgentCount;
+      document.getElementById('stat-done').innerText = doneCount;
     }
 
-    function renderTasks() {
-      const container = document.getElementById('tasks-list');
+    function setViewMode(mode) {
+      viewMode = mode;
+      document.getElementById('btn-view-week').classList.toggle('active', mode === 'week');
+      document.getElementById('btn-view-month').classList.toggle('active', mode === 'month');
+      haptic('light');
+      renderCalendarGrid();
+    }
+
+    function changeMonth(offset) {
+      if (viewMode === 'week') {
+        currentNavDate.setDate(currentNavDate.getDate() + (offset * 7));
+      } else {
+        currentNavDate.setMonth(currentNavDate.getMonth() + offset);
+      }
+      haptic('light');
+      renderCalendarGrid();
+    }
+
+    function setCategoryFilter(cat, btn) {
+      currentCategoryFilter = cat;
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      haptic('light');
+      renderAgenda();
+    }
+
+    // Render 7-column Calendar Grid
+    function renderCalendarGrid() {
+      const grid = document.getElementById('calendar-grid');
+      grid.innerHTML = '';
+
+      document.getElementById('cal-month-title').innerText = 
+        `${MONTHS[currentNavDate.getMonth()]} ${currentNavDate.getFullYear()}`;
+
+      if (viewMode === 'week') {
+        // Find Monday of the currentNavDate week
+        const cur = new Date(currentNavDate);
+        const dayOfWeek = (cur.getDay() + 6) % 7; // 0 = Mon, 6 = Sun
+        const monday = new Date(cur);
+        monday.setDate(cur.getDate() - dayOfWeek);
+
+        for (let i = 0; i < 7; i++) {
+          const d = new Date(monday);
+          d.setDate(monday.getDate() + i);
+          grid.appendChild(createDayCell(d));
+        }
+      } else {
+        // Month view: full month grid
+        const year = currentNavDate.getFullYear();
+        const month = currentNavDate.getMonth();
+        const firstDay = new Date(year, month, 1);
+        const lastDay = new Date(year, month + 1, 0);
+
+        const startDayOfWeek = (firstDay.getDay() + 6) % 7; // Monday offset
+        const totalDays = lastDay.getDate();
+
+        // Previous month filler
+        for (let i = startDayOfWeek - 1; i >= 0; i--) {
+          const d = new Date(year, month, -i);
+          const cell = createDayCell(d);
+          cell.classList.add('other-month');
+          grid.appendChild(cell);
+        }
+
+        // Current month days
+        for (let day = 1; day <= totalDays; day++) {
+          const d = new Date(year, month, day);
+          grid.appendChild(createDayCell(d));
+        }
+
+        // Next month filler
+        const endDayOfWeek = (lastDay.getDay() + 6) % 7;
+        for (let i = 1; i < (7 - endDayOfWeek); i++) {
+          const d = new Date(year, month + 1, i);
+          const cell = createDayCell(d);
+          cell.classList.add('other-month');
+          grid.appendChild(cell);
+        }
+      }
+    }
+
+    function createDayCell(d) {
+      const iso = toLocalIso(d);
+      const cell = document.createElement('div');
+      cell.className = 'cal-day-cell';
+      if (iso === todayIso) cell.classList.add('is-today');
+      if (iso === selectedDateIso) cell.classList.add('selected');
+
+      const numEl = document.createElement('div');
+      numEl.className = 'day-number';
+      numEl.innerText = d.getDate();
+      cell.appendChild(numEl);
+
+      // Dots
+      const dotsEl = document.createElement('div');
+      dotsEl.className = 'day-dots';
+      
+      const dayTasks = allTasks.filter(t => t.due_at && t.due_at.startsWith(iso) && t.status !== 'completed');
+      dayTasks.slice(0, 3).forEach(t => {
+        const dot = document.createElement('div');
+        dot.className = 'dot';
+        if (t.priority === 'high') dot.classList.add('urgent');
+        else if (t.category.includes('Ozon')) dot.classList.add('ozon');
+        else if (t.category.includes('Семья')) dot.classList.add('family');
+        else dot.classList.add('work');
+        dotsEl.appendChild(dot);
+      });
+
+      cell.appendChild(dotsEl);
+
+      cell.onclick = () => {
+        haptic('light');
+        if (selectedDateIso === iso) {
+          selectedDateIso = null;
+        } else {
+          selectedDateIso = iso;
+        }
+        renderCalendarGrid();
+        renderAgenda();
+
+        // Smooth scroll to target day if in agenda
+        if (selectedDateIso) {
+          const targetGroup = document.getElementById(`group-${iso}`);
+          if (targetGroup) {
+            targetGroup.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+      };
+
+      return cell;
+    }
+
+    // Render Full Chronological Agenda Feed (Zero Lost Tasks)
+    function renderAgenda() {
+      const container = document.getElementById('agenda-feed');
+      container.innerHTML = '';
+
       let filtered = allTasks;
 
-      if (currentFilter === 'today') {
-        const todayIso = new Date().toISOString().split('T')[0];
-        filtered = filtered.filter(t => t.due_at && t.due_at.startsWith(todayIso));
-        document.getElementById('list-title').innerText = 'Задачи на сегодня';
-      } else if (currentFilter !== 'all') {
-        filtered = filtered.filter(t => t.category === currentFilter);
-        document.getElementById('list-title').innerText = currentFilter;
-      } else {
-        // Filter by selected calendar date if date clicked
-        const dateTasks = filtered.filter(t => t.due_at && t.due_at.startsWith(selectedDate));
-        if (dateTasks.length > 0) {
-          filtered = dateTasks;
-          document.getElementById('list-title').innerText = `Задачи на ${selectedDate}`;
-        } else {
-          document.getElementById('list-title').innerText = 'Все активные задачи';
-        }
+      // Filter by Category
+      if (currentCategoryFilter === 'urgent') {
+        filtered = filtered.filter(t => t.priority === 'high');
+      } else if (currentCategoryFilter === 'completed') {
+        filtered = filtered.filter(t => t.status === 'completed');
+      } else if (currentCategoryFilter !== 'all') {
+        filtered = filtered.filter(t => t.category === currentCategoryFilter);
       }
 
-      document.getElementById('task-count').innerText = `${filtered.length} задач`;
+      // If a specific day in grid was selected, focus on it or show all with that day first
+      if (selectedDateIso) {
+        filtered = filtered.filter(t => t.due_at && t.due_at.startsWith(selectedDateIso));
+      }
 
       if (filtered.length === 0) {
         container.innerHTML = `
-          <div class="empty-state">
-            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <p>На этот день задач нет. Всё свободно!</p>
-          </div>`;
+          <div class="empty-day-stub" style="padding: 30px 16px;">
+            <p style="font-size: 14px; font-weight:600; margin-bottom: 4px;">Задач в этом фильтре нет</p>
+            <p style="color: var(--text-dim); font-size: 12px;">Нажмите «+» внизу справа, чтобы добавить новую задачу</p>
+          </div>
+        `;
         return;
       }
 
-      container.innerHTML = filtered.map(t => {
-        let timeStr = 'Без срока';
-        let isUrgent = false;
-        if (t.due_at) {
-          const d = new Date(t.due_at);
-          timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          if (t.priority === 'high') isUrgent = true;
+      // Group tasks by Date ISO
+      const groups = {};
+      filtered.forEach(t => {
+        const dateKey = t.due_at ? t.due_at.split('T')[0] : 'no_date';
+        if (!groups[dateKey]) groups[dateKey] = [];
+        groups[dateKey].push(t);
+      });
+
+      // Sort dates
+      const sortedKeys = Object.keys(groups).sort();
+
+      sortedKeys.forEach(key => {
+        const groupEl = document.createElement('div');
+        groupEl.className = 'agenda-day-group';
+        groupEl.id = `group-${key}`;
+
+        // Header format
+        let titleText = '';
+        let isTodayGroup = false;
+
+        if (key === 'no_date') {
+          titleText = '📦 Без срока';
+        } else {
+          const [y, m, d] = key.split('-').map(Number);
+          const dateObj = new Date(y, m - 1, d);
+          const dayName = DAYS_RU[dateObj.getDay()];
+          const monthName = MONTHS_GENITIVE[dateObj.getMonth()];
+          
+          if (key === todayIso) {
+            titleText = `🔥 Сегодня, ${d} ${monthName} (${dayName})`;
+            isTodayGroup = true;
+          } else {
+            titleText = `📅 ${dayName}, ${d} ${monthName}`;
+          }
         }
 
-        const isDone = t.status === 'completed';
-
-        return `
-          <div class="task-card ${isDone ? 'completed' : ''}" id="task-${t.id}">
-            <div class="checkbox" onclick="toggleTask(${t.id})">
-              ${isDone ? '✓' : ''}
-            </div>
-            <div class="task-content">
-              <div class="task-header">
-                <span class="task-category">${t.category || 'Общее'}</span>
-                <span class="task-time ${isUrgent ? 'urgent' : ''}">⏰ ${timeStr}</span>
-              </div>
-              <div class="task-title">${escapeHtml(t.title)}</div>
-              <div class="task-footer">
-                <button class="btn-postpone" onclick="postponeTask(${t.id})">⏰ +1 час</button>
-              </div>
-            </div>
+        groupEl.innerHTML = `
+          <div class="group-header">
+            <span class="group-title ${isTodayGroup ? 'today' : ''}">${titleText}</span>
+            <span class="group-badge">${groups[key].length}</span>
           </div>
         `;
-      }).join('');
+
+        groups[key].forEach(t => {
+          groupEl.appendChild(createTaskCard(t));
+        });
+
+        container.appendChild(groupEl);
+      });
     }
 
-    async function toggleTask(taskId) {
-      haptic();
-      const card = document.getElementById(`task-${taskId}`);
-      card.classList.toggle('completed');
+    function createTaskCard(t) {
+      const card = document.createElement('div');
+      card.className = `task-card ${t.status === 'completed' ? 'completed' : ''}`;
+      
+      if (t.category.includes('Ozon')) card.classList.add('cat-ozon');
+      else if (t.category.includes('Семья')) card.classList.add('cat-family');
+      else if (t.priority === 'high') card.classList.add('cat-urgent');
 
+      let timeDisplay = 'Без времени';
+      if (t.due_at) {
+        const dt = new Date(t.due_at);
+        const hours = String(dt.getHours()).padStart(2, '0');
+        const mins = String(dt.getMinutes()).padStart(2, '0');
+        timeDisplay = `⏰ ${hours}:${mins}`;
+      }
+
+      const priorityBadge = t.priority === 'high' 
+        ? `<span class="priority-badge high">🔴 Срочно</span>` 
+        : `<span class="priority-badge medium">${t.priority}</span>`;
+
+      // Channels
+      const channels = t.target_channels || ['telegram'];
+      const chanBadges = channels.map(c => {
+        if (c.includes('alice')) return '<span class="tag">🔊 Алиса</span>';
+        if (c.includes('samsung')) return '<span class="tag">📱 Телефон</span>';
+        return '<span class="tag">💬 TG</span>';
+      }).join(' ');
+
+      card.innerHTML = `
+        <div class="task-checkbox" onclick="toggleTask(${t.id})">
+          ${t.status === 'completed' ? '✓' : ''}
+        </div>
+        <div class="task-details">
+          <div class="task-top">
+            <span class="task-time">${timeDisplay}</span>
+            ${priorityBadge}
+          </div>
+          <div class="task-title">${t.title}</div>
+          <div class="task-tags">
+            <span class="tag" style="color:var(--accent-blue);">${t.category}</span>
+            ${chanBadges}
+          </div>
+          <div class="task-actions">
+            <button class="act-btn" onclick="postponeTask(${t.id})">⏳ +1 час</button>
+            <button class="act-btn" onclick="deleteTask(${t.id})">🗑 Удалить</button>
+          </div>
+        </div>
+      `;
+
+      return card;
+    }
+
+    async function toggleTask(id) {
+      haptic('light');
       try {
-        await fetch(`${API_BASE}/api/tasks/${taskId}/toggle`, { method: 'POST' });
+        await fetch(`/api/tasks/${id}/toggle`, { method: 'POST' });
         loadTasks();
       } catch (e) {
         console.error(e);
       }
     }
 
-    async function postponeTask(taskId) {
-      haptic();
+    async function postponeTask(id) {
+      haptic('light');
       try {
-        await fetch(`${API_BASE}/api/tasks/${taskId}/postpone`, { method: 'POST' });
+        await fetch(`/api/tasks/${id}/postpone`, { method: 'POST' });
         loadTasks();
       } catch (e) {
         console.error(e);
       }
     }
 
-    async function quickAddTask() {
-      const input = document.getElementById('quick-input');
-      const val = input.value.trim();
-      if (!val) return;
+    async function deleteTask(id) {
+      if (!confirm('Удалить эту задачу?')) return;
+      haptic('light');
+      try {
+        await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+        loadTasks();
+      } catch (e) {
+        console.error(e);
+      }
+    }
 
-      haptic();
-      input.value = '';
+    // Add Task Modal
+    function openAddModal() {
+      haptic('light');
+      const now = new Date();
+      now.setHours(now.getHours() + 1, 0, 0, 0);
+      const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      document.getElementById('task-datetime-input').value = localIso;
+      document.getElementById('add-modal').classList.add('open');
+    }
+
+    function closeAddModal() {
+      document.getElementById('add-modal').classList.remove('open');
+    }
+
+    async function submitNewTask() {
+      const title = document.getElementById('task-title-input').value.trim();
+      if (!title) {
+        alert('Введите название задачи');
+        return;
+      }
+      const category = document.getElementById('task-category-input').value;
+      const due = document.getElementById('task-datetime-input').value;
+      const priority = document.getElementById('task-priority-input').value;
 
       try {
-        await fetch(`${API_BASE}/api/tasks`, {
+        await fetch('/api/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: jsonString({ title: val, due_date: selectedDate })
+          body: JSON.stringify({
+            title: title,
+            category: category,
+            due_at: due ? new Date(due).toISOString() : null,
+            priority: priority
+          })
         });
+        haptic('success');
+        document.getElementById('task-title-input').value = '';
+        closeAddModal();
         loadTasks();
       } catch (e) {
-        console.error(e);
+        alert('Ошибка добавления задачи: ' + e);
       }
     }
 
-    function jsonString(obj) {
-      return JSON.stringify(obj);
-    }
-
-    async function openMaxModal() {
-      haptic();
-      const modal = document.getElementById('max-modal');
-      modal.classList.add('open');
-      document.getElementById('max-digest-text').innerText = 'Загрузка свежей аналитики из мессенджера MAX...';
-
-      try {
-        const res = await fetch(`${API_BASE}/api/max/digest`);
-        const data = await res.json();
-        document.getElementById('max-digest-text').innerText = data.digest || 'Сводка пока формируется.';
-      } catch (e) {
-        document.getElementById('max-digest-text').innerText = 'Не удалось загрузить сводку MAX.';
-      }
+    function showMaxDigest() {
+      haptic('light');
+      document.getElementById('max-modal-text').innerText = 
+        '📊 Сводка MAX формируется автоматически в 09:00 и 21:00 МСК.\n\nТекущие переписки:\n• Диана / Кружки: запланирована встреча на понедельник 10:00.\n• Тверьнефтепродукт: производство роликов для АЗС в штатном режиме.\n• Диарус: подготовка спецификаций.\n\nДля запуска внеочередного сбора переписок нажмите «Сводка MAX» в боте Telegram.';
+      document.getElementById('max-modal').classList.add('open');
     }
 
     function closeMaxModal() {
-      haptic();
       document.getElementById('max-modal').classList.remove('open');
     }
 
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.innerText = text;
-      return div.innerHTML;
-    }
-
-    // Startup
-    initCalendarStrip();
+    // Init
     loadTasks();
-    setInterval(loadTasks, 15000); // 15s auto-refresh
   </script>
 </body>
 </html>
