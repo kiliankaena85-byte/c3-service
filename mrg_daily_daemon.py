@@ -25,28 +25,30 @@ if hasattr(sys.stdout, 'reconfigure'):
         pass
 
 # Загружаем настройки окружения
-load_dotenv('.env')
-load_dotenv('E:/Documents/Lider/c3_prototype/.env')
-load_dotenv('E:/target/.env')
+load_dotenv()
 
-API_ID = int(os.getenv('TELEGRAM_API_ID', 29754260))
-API_HASH = os.getenv('TELEGRAM_API_HASH', '804f2b1d81e39132935a0c9f93b83efe')
+API_ID = int(os.getenv('TELEGRAM_API_ID') or 0)
+API_HASH = os.getenv('TELEGRAM_API_HASH')
 SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING')
 
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8861326274:AAGa7nFoV9mtJt-TuxL-_z6khjVvseMQaXk')
-TARGET_CHAT_ID = int(os.getenv('TARGET_CHAT_ID', -5326365335))
-TARGET_USER_ID = int(os.getenv('TARGET_USER_ID', 268747191))  # Артем (@Artmspektr)
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TARGET_CHAT_ID = int(os.getenv('TARGET_CHAT_ID', '-5326365335'))
+TARGET_USER_ID = int(os.getenv('TARGET_USER_ID', '268747191'))  # Артем (@Artmspektr)
 
 ARCHIVE_PATH = os.path.join(os.path.dirname(__file__), "data", "mrg_archive.json")
 DAILY_SUMMARY_PATH = os.path.join(os.path.dirname(__file__), "data", "mrg_daily_summary.md")
 
 
-def send_telegram_dm(text: str, user_id: int = TARGET_USER_ID, token: str = BOT_TOKEN) -> bool:
+def send_telegram_dm(text: str, user_id: int = TARGET_USER_ID, token: str = None) -> bool:
     """
     Отправляет форматированное сообщение напрямую в ЛИЧНЫЕ СООБЩЕНИЯ пользователю через Bot API.
     Поддерживает автоматическое разбиение длинных текстов на части до 3900 символов.
     """
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    tok = token or BOT_TOKEN or os.getenv('TELEGRAM_BOT_TOKEN')
+    if not tok:
+        print("[Bot DM] ❌ TELEGRAM_BOT_TOKEN не задан в окружении")
+        return False
+    url = f"https://api.telegram.org/bot{tok}/sendMessage"
     max_len = 3900
     chunks = []
     

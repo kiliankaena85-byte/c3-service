@@ -48,6 +48,11 @@ class LayaAssistantDecisionEngine:
         r'\bмои\s+дела\b', r'\bплан\b', r'\bдела\s+на\s+сегодня\b', r'\bзадачи\b'
     ]
 
+    GREETING_PATTERNS = [
+        r'^(привет|здравствуй|здравствуйте|добрый\s+(день|вечер|утро)|салют|хай)\b',
+        r'^(спасибо|благодарю|отлично|супер|понял|ясно|пока|до\s+свидания|доброй\s+ночи)\b'
+    ]
+
     @classmethod
     def evaluate_intent_and_routing(cls, text: str) -> Dict[str, Any]:
         """
@@ -67,6 +72,8 @@ class LayaAssistantDecisionEngine:
             intent = "LIST_TASKS"
         elif any(w in clean for w in ["выполнил", "сделал", "закрыл", "готово", "удали задачу"]):
             intent = "COMPLETE_TASK"
+        elif any(re.search(p, clean) for p in cls.GREETING_PATTERNS) and not any(w in clean for w in ["напомни", "задача", "надо", "нужно", "забрать", "позвонить", "купить", "встреча", "сделать", "заехать"]):
+            intent = "GREETING"
         elif any(w in clean for w in ["напомни", "задача", "надо", "нужно", "забрать", "позвонить", "купить", "встреча", "сделать", "заехать"]):
             intent = "CREATE_TASK"
         else:
@@ -138,6 +145,10 @@ class LayaAssistantDecisionEngine:
             return "Запуск краулера web.max.ru и генерация дайджеста Gemini 3.8 Flash"
         elif intent == "LIST_TASKS":
             return "Вывод активных задач из Neon DB"
+        elif intent == "COMPLETE_TASK":
+            return "Отметка задачи как выполненной в Neon DB"
+        elif intent == "GREETING":
+            return "Ответ на приветствие или вежливый диалог без фиксации задачи"
         return "Обработка диалога"
 
     @classmethod

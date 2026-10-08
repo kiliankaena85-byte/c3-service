@@ -6,6 +6,9 @@ Serves interactive live demonstration and REST API endpoints.
 import os
 import sys
 import json
+import hmac
+import hashlib
+from urllib.parse import parse_qsl
 import asyncio
 import requests
 import uvicorn
@@ -209,7 +212,69 @@ async def calendar_page(request):
     return HTMLResponse("<h1>Calendar Mini App is loading...</h1>")
 
 
+def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
+    """
+    Validates Telegram WebApp initData cryptographic signature (HMAC-SHA256).
+    """
+    if not init_data or not bot_token:
+        return False
+    try:
+        parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+        if "hash" not in parsed:
+            return False
+        received_hash = parsed.pop("hash")
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+        calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calculated_hash, received_hash):
+            return False
+            
+        user_raw = parsed.get("user")
+        if user_raw:
+            user_dict = json.loads(user_raw)
+            auth_user_id = int(os.getenv("AUTHORIZED_USER_ID", "268747191"))
+            if user_dict.get("id") != auth_user_id:
+                print(f"[Auth] Access denied for unauthorized Telegram ID {user_dict.get('id')}")
+                return False
+        return True
+    except Exception as e:
+        print(f"[Auth] Exception verifying initData: {e}")
+        return False
+
+
+def is_authorized_request(request) -> bool:
+    """
+    Verifies either Telegram WebApp initData HMAC or secure token check.
+    Returns True if authorized, False otherwise.
+    """
+    init_data = request.headers.get("X-Telegram-Init-Data") or request.query_params.get("initData") or ""
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    calendar_token = os.getenv("CALENDAR_AUTH_TOKEN")
+    auth_header = request.headers.get("Authorization", "").strip()
+
+    # 1. Bearer / Token authorization check
+    if calendar_token:
+        if auth_header == f"Bearer {calendar_token}" or init_data == calendar_token:
+            return True
+    if bot_token:
+        if auth_header == f"Bearer {bot_token}" or init_data == bot_token:
+            return True
+
+    # 2. Cryptographic Telegram WebApp initData verification
+    if init_data and bot_token and ("hash=" in init_data or "&" in init_data):
+        if verify_telegram_init_data(init_data, bot_token):
+            return True
+
+    # 3. Allow unauthenticated requests only in explicit debug / local test mode
+    if os.getenv("ALLOW_UNAUTHENTICATED_TASKS", "false").lower() == "true":
+        return True
+
+    return False
+
+
 async def api_get_tasks(request):
+    if not is_authorized_request(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized: valid Telegram initData or token required"}, status_code=401)
     conn = get_db()
     if not conn:
         return JSONResponse([])
@@ -238,6 +303,8 @@ async def api_get_tasks(request):
 
 
 async def api_toggle_task(request):
+    if not is_authorized_request(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized"}, status_code=401)
     task_id = request.path_params.get("task_id")
     conn = get_db()
     if not conn:
@@ -257,6 +324,8 @@ async def api_toggle_task(request):
 
 
 async def api_postpone_task(request):
+    if not is_authorized_request(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized"}, status_code=401)
     task_id = request.path_params.get("task_id")
     conn = get_db()
     if not conn:
@@ -275,6 +344,8 @@ async def api_postpone_task(request):
 
 
 async def api_delete_task(request):
+    if not is_authorized_request(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized"}, status_code=401)
     task_id = request.path_params.get("task_id")
     conn = get_db()
     if not conn:
@@ -289,6 +360,8 @@ async def api_delete_task(request):
 
 
 async def api_create_task(request):
+    if not is_authorized_request(request):
+        return JSONResponse({"status": "error", "message": "Unauthorized: valid Telegram initData or token required"}, status_code=401)
     try:
         body = await request.json()
     except Exception:
@@ -300,13 +373,13 @@ async def api_create_task(request):
     
     conn = get_db()
     if not conn:
-        return JSONResponse({"status": "error"})
+        return JSONResponse({"status": "error", "message": "Database unavailable"}, status_code=500)
     try:
         with conn.cursor() as cur:
             if due_at:
                 cur.execute("""
                     INSERT INTO user_tasks (user_id, title, raw_input, category, priority, due_at, remind_at, target_channels)
-                    VALUES (268747191, %s, %s, %s, %s, %s, %s - INTERVAL '15 minutes', ARRAY['telegram', 'samsung_calendar'])
+                    VALUES (268747191, %s, %s, %s, %s, %s::timestamptz, %s::timestamptz - INTERVAL '15 minutes', ARRAY['telegram', 'samsung_calendar'])
                     RETURNING id;
                 """, (title, title, category, priority, due_at, due_at))
             else:
@@ -318,6 +391,9 @@ async def api_create_task(request):
             tid = cur.fetchone()[0]
             conn.commit()
             return JSONResponse({"status": "ok", "task_id": tid})
+    except Exception as e:
+        print(f"[DB Create Task] Error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
     finally:
         conn.close()
 

@@ -12,12 +12,16 @@ from dotenv import load_dotenv
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-ENV_PATH = r"E:\Documents\Lider\.env"
-if os.path.exists(ENV_PATH):
-    load_dotenv(ENV_PATH)
+load_dotenv()
 
-# Private unique topics for Artem (supporting both task and tasks)
-NTFY_TOPICS = ["artem_spektr_task_2026", "artem_spektr_tasks_2026"]
+# Secure private topic for Artem (uniquely salted against topic scanning)
+DEFAULT_TOPIC = "artem_spektr_tasks_a35_sec_9d4f18b"
+env_topics = os.getenv("NTFY_TOPICS") or os.getenv("NTFY_TOPIC")
+if env_topics:
+    NTFY_TOPICS = [t.strip() for t in env_topics.split(",") if t.strip()]
+else:
+    NTFY_TOPICS = [DEFAULT_TOPIC]
+
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 
 

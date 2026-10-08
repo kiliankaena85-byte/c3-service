@@ -14,8 +14,10 @@ import os
 import sys
 import time
 import json
+import re
 import base64
 import datetime
+import zoneinfo
 import threading
 import urllib.request
 import urllib.parse
@@ -25,15 +27,37 @@ from dotenv import load_dotenv
 sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
-ENV_PATH = r"E:\Documents\Lider\.env"
-if os.path.exists(ENV_PATH):
-    load_dotenv(ENV_PATH)
+
+MSK = zoneinfo.ZoneInfo("Europe/Moscow")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8861326274:AAGa7nFoV9mtJt-TuxL-_z6khjVvseMQaXk")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 AUTHORIZED_USER_ID = int(os.getenv("AUTHORIZED_USER_ID", "268747191"))
-CALENDAR_URL = "https://c3-service-il4m.onrender.com/calendar"
+CALENDAR_URL = os.getenv("CALENDAR_URL", "https://c3-service-il4m.onrender.com/calendar")
+
+
+def to_msk(dt_val):
+    """Safely converts string, date, or datetime into MSK (Europe/Moscow) datetime."""
+    if not dt_val:
+        return None
+    if isinstance(dt_val, str):
+        try:
+            val = dt_val.replace("Z", "+00:00")
+            dt_obj = datetime.datetime.fromisoformat(val)
+            if dt_obj.tzinfo is None:
+                return dt_obj.replace(tzinfo=MSK)
+            return dt_obj.astimezone(MSK)
+        except Exception:
+            return None
+    elif isinstance(dt_val, datetime.datetime):
+        if dt_val.tzinfo is None:
+            dt_val = dt_val.replace(tzinfo=datetime.timezone.utc)
+        return dt_val.astimezone(MSK)
+    elif isinstance(dt_val, datetime.date):
+        dt_val = datetime.datetime.combine(dt_val, datetime.time.min).replace(tzinfo=MSK)
+        return dt_val
+    return None
 
 # Import Laya Assistant Decision Engine
 try:
@@ -362,32 +386,33 @@ def parse_task_text_gemini(user_text, laya_hints=None):
     Extracts structured task JSON from natural language text using Gemini 3.8 Flash.
     Enriched with Laya Decision Engine hints.
     """
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(MSK)
     now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
     hints_str = ""
     if laya_hints:
-        hints_str = f"Подсказка LAYA AI: Категория={laya_hints.get('category')}, Срочность={laya_hints.get('urgency_score')}/5."
+        hints_str = f"Подсказка LAYA AI: Категория={laya_hints.get('category')}, Срочность={laya_hints.get('urgency_score')}/5, Интент={laya_hints.get('laya_intent')}."
 
     prompt = f"""Ты — персональный ИИ-ассистент руководителя (Артёма).
-Текущее точное время и дата: {now_str} (МСК, таймзона +03:00).
+Текущее точное время и дата: {now_str} (МСК, Europe/Moscow, UTC+3).
 Сегодняшний день недели: {['понедельник','вторник','среда','четверг','пятница','суббота','воскресенье'][now.weekday()]}.
 {hints_str}
 
 Пользователь передал текст:
 "{user_text}"
 
-Твоя цель — извлечь параметры задачи:
-- title: короткая, ёмкая формулировка задачи (например: "Забрать ножницы для бабушки из Ozon")
-- category: Работа / Заказчики, Быт / Семья, Покупки / Ozon, Здоровье, Авто
-- due_at: ISO-8601 строка даты и времени дедлайна с таймзоной (+03:00). Если сказано "сегодня в 18:00", поставь сегодняшнюю дату и 18:00.
-- remind_at: когда отправить напоминание (ISO-8601). Если не указано отдельно, сделай за 15 минут до due_at (или в момент due_at).
+Твоя цель — извлечь параметры задачи или ответить на реплику:
+- title: короткая, ёмкая формулировка задачи (например: "Забрать ножницы для бабушки из Ozon").
+  КРИТИЧЕСКИ ВАЖНО: Если текст НЕ содержит конкретного поручения, задачи или действия (например: приветствие "Привет", "Здравствуйте", благодарность "Спасибо", согласие "Ок", вопрос "Как дела?", светская реплика), верни строго "title": null.
+- category: Работа / Заказчики, Быт / Семья, Покупки / Ozon, Здоровье, Авто, Личные дела
+- due_at: ISO-8601 строка даты и времени дедлайна с таймзоной (+03:00). Если сказано "сегодня в 18:00", поставь сегодняшнюю дату и 18:00:00+03:00. Если срок не указан, верни null.
+- remind_at: когда отправить напоминание (ISO-8601). Если не указано отдельно, сделай за 15 минут до due_at (или в момент due_at). Если due_at null, верни null.
 - priority: high / medium / low
-- confirmation_message: живое, вежливое подтверждение от первого лица (например: "Принято, Артём! Поставил напоминание на сегодня в 18:00: забрать ножницы на Ozon для бабушки.")
+- confirmation_message: живой, вежливый ответ от первого лица (если задачи нет — вежливо поприветствуй или ответь Артёму; если задача зафиксирована — подтверди принятие).
 
 ВЕРНИ ТОЛЬКО ЧИСТЫЙ ВАЛИДНЫЙ JSON:
 {{
-  "title": "...",
+  "title": null,
   "category": "...",
   "due_at": "YYYY-MM-DDTHH:MM:SS+03:00",
   "remind_at": "YYYY-MM-DDTHH:MM:SS+03:00",
@@ -404,28 +429,38 @@ def parse_task_text_gemini(user_text, laya_hints=None):
         }
     }
 
-    for model in ["gemini-3.8-flash", "gemini-3.5-flash"]:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-            data = json.dumps(req_body).encode("utf-8")
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                res = json.loads(resp.read().decode("utf-8"))
-                ans_text = res["candidates"][0]["content"]["parts"][0]["text"]
-                return json.loads(ans_text)
-        except Exception as e:
-            print(f"[AI Task] Error with {model}: {e}")
+    if GEMINI_API_KEY:
+        for model in ["gemini-3.8-flash", "gemini-3.5-flash"]:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+                data = json.dumps(req_body).encode("utf-8")
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    res = json.loads(resp.read().decode("utf-8"))
+                    ans_text = res["candidates"][0]["content"]["parts"][0]["text"]
+                    return json.loads(ans_text)
+            except Exception as e:
+                print(f"[AI Task] Error with {model}: {e}")
 
-    # Fallback to Laya hints
+    # Fallback to Laya hints when Gemini is unavailable
+    if laya_hints and laya_hints.get("laya_intent") in ["GREETING", "EMPTY"]:
+        return {
+            "title": None,
+            "category": "Общее",
+            "due_at": None,
+            "remind_at": None,
+            "priority": "low",
+            "confirmation_message": "Приветствую, Артём! Чем могу помочь?"
+        }
     cat = laya_hints.get("category", "Общее") if laya_hints else "Общее"
     prio = laya_hints.get("priority", "medium") if laya_hints else "medium"
     return {
-        "title": user_text if user_text else "Новая задача",
+        "title": user_text if (user_text and len(user_text.strip()) > 3) else None,
         "category": cat,
         "due_at": None,
         "remind_at": None,
         "priority": prio,
-        "confirmation_message": f"Задача сохранена: {user_text}"
+        "confirmation_message": f"Задача принята: {user_text}" if user_text else "Приветствую, Артём!"
     }
 
 
@@ -479,7 +514,8 @@ def handle_message(msg):
 
         msg_lines = ["📋 **ВАШИ АКТИВНЫЕ ЗАДАЧИ:**\n"]
         for t in tasks:
-            due_str = t['due_at'].strftime('%d.%m в %H:%M') if t['due_at'] else "без срока"
+            due_msk = to_msk(t['due_at'])
+            due_str = due_msk.strftime('%d.%m в %H:%M') if due_msk else "без срока"
             msg_lines.append(f"• **#{t['id']} {t['title']}**\n   📂 *{t['category']}* | ⏰ {due_str} | Важность: {t['priority']}")
 
         inline_cal = {
@@ -502,9 +538,9 @@ def handle_message(msg):
 
     # 4. Yandex Station (Alice) Status & OAuth
     if text in ["/alice", "🔊 Яндекс Алиса", "алиса", "станция"]:
-        tok = os.getenv("YANDEX_OAUTH_TOKEN")
         try:
-            from yandex_alice import get_smart_home_devices, YANDEX_OAUTH_URL
+            from yandex_alice import get_yandex_token, get_smart_home_devices, YANDEX_OAUTH_URL
+            tok = get_yandex_token(user_id)
             speakers = get_smart_home_devices(tok) if tok else []
             if speakers:
                 sp_names = ", ".join([f"«{s['name']}» ({s['room']})" for s in speakers])
@@ -549,7 +585,7 @@ def handle_message(msg):
         if clean_tok.startswith("y0_"):
             try:
                 from yandex_alice import save_yandex_token, get_smart_home_devices
-                save_yandex_token(clean_tok)
+                save_yandex_token(clean_tok, user_id=user_id)
                 speakers = get_smart_home_devices(clean_tok)
                 if speakers:
                     sp_names = ", ".join([f"«{s['name']}» ({s['room']})" for s in speakers])
@@ -592,6 +628,33 @@ def handle_message(msg):
             send_message(chat_id, f"❌ Ошибка: {e}")
         return
 
+    if laya["laya_intent"] == "COMPLETE_TASK" or any(w in raw_input_text.lower() for w in ["выполнил", "сделал", "закрыл", "готово", "удали задачу"]):
+        id_match = re.search(r'#?(\d+)', raw_input_text)
+        if id_match:
+            target_id = int(id_match.group(1))
+            if db_complete_task(target_id):
+                send_message(chat_id, f"🎉 **Отлично!** Задача #{target_id} помечена как выполненная.")
+            else:
+                send_message(chat_id, f"⚠️ Не удалось обновить задачу #{target_id}. Возможно, она уже закрыта.")
+            return
+        else:
+            tasks = db_get_active_tasks(user_id)
+            if not tasks:
+                send_message(chat_id, "✅ На данный момент у вас нет активных задач для завершения.")
+                return
+            elif len(tasks) == 1:
+                t = tasks[0]
+                db_complete_task(t["id"])
+                send_message(chat_id, f"🎉 **Отлично!** Задача #{t['id']} («{t['title']}») помечена как выполненная.")
+                return
+            else:
+                kb_buttons = [
+                    [{"text": f"✅ #{t['id']} {t['title'][:28]}", "callback_data": f"done_{t['id']}"}]
+                    for t in tasks[:6]
+                ]
+                send_message(chat_id, "Какую из активных задач вы выполнили? Выберите из списка:", reply_markup={"inline_keyboard": kb_buttons})
+                return
+
     if laya["laya_intent"] == "LIST_TASKS":
         tasks = db_get_active_tasks(user_id)
         if not tasks:
@@ -599,7 +662,8 @@ def handle_message(msg):
             return
         msg_lines = ["📋 **ВАШИ АКТИВНЫЕ ЗАДАЧИ:**\n"]
         for t in tasks:
-            due_str = t['due_at'].strftime('%d.%m в %H:%M') if t['due_at'] else "без срока"
+            due_msk = to_msk(t['due_at'])
+            due_str = due_msk.strftime('%d.%m в %H:%M') if due_msk else "без срока"
             msg_lines.append(f"• **#{t['id']} {t['title']}** [{t['category']}] — ⏰ *{due_str}*")
         inline_cal = {
             "inline_keyboard": [
@@ -612,7 +676,13 @@ def handle_message(msg):
     # Step 3: Gemini 3.8 Flash Task Parameters Parsing (System 2)
     parsed = parse_task_text_gemini(raw_input_text, laya_hints=laya)
 
-    title = parsed.get("title") or raw_input_text or "Новая задача"
+    title = parsed.get("title")
+    # Prevent phantom tasks: if Gemini returns title: null or empty, send conversational reply and do NOT insert into DB
+    if not title or str(title).strip().lower() in ["null", "none", "", "нет", "нет задачи"]:
+        confirm_text = parsed.get("confirmation_message") or "Приветствую, Артём! Чем могу помочь?"
+        send_message(chat_id, confirm_text)
+        return
+
     category = parsed.get("category") or laya.get("category") or "Общее"
     due_at = parsed.get("due_at")
     remind_at = parsed.get("remind_at")
@@ -639,10 +709,10 @@ def handle_message(msg):
 
     due_display = ""
     if due_at:
-        try:
-            dt_obj = datetime.datetime.fromisoformat(due_at)
-            due_display = f"\n⏰ **Срок:** {dt_obj.strftime('%d.%m.%Y в %H:%M')}"
-        except Exception:
+        due_msk = to_msk(due_at)
+        if due_msk:
+            due_display = f"\n⏰ **Срок:** {due_msk.strftime('%d.%m.%Y в %H:%M (МСК)')}"
+        else:
             due_display = f"\n⏰ **Срок:** {due_at}"
 
     # Human-readable channel labels
@@ -711,7 +781,8 @@ def reminder_worker():
                 task_id, user_id, title, category, due_at, target_channels = t
                 print(f"[Reminder Worker] Firing reminder for Task #{task_id}: '{title}' | Channels: {target_channels}")
                 
-                due_str = due_at.strftime('%H:%M') if due_at else "сейчас"
+                due_msk = to_msk(due_at)
+                due_str = due_msk.strftime('%H:%M (МСК)') if due_msk else "сейчас"
                 text = (
                     f"⏰ **НАПОМИНАНИЕ!**\n\n"
                     f"🔔 **{title}**\n"

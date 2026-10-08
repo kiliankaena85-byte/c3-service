@@ -12,15 +12,44 @@ from dotenv import load_dotenv
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-ENV_PATH = r"E:\Documents\Lider\.env"
-if os.path.exists(ENV_PATH):
-    load_dotenv(ENV_PATH)
+load_dotenv()
 
-YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN")
+def get_db():
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(db_url)
+            conn.set_client_encoding('UTF8')
+            return conn
+        except Exception as e:
+            print(f"[Alice DB] Connection error: {e}")
+    return None
+
+
+def get_yandex_token(user_id: int = 268747191) -> str:
+    """Loads Yandex OAuth token dynamically from Neon DB or environment."""
+    conn = get_db()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT value FROM user_settings WHERE user_id = %s AND key = 'YANDEX_OAUTH_TOKEN';",
+                    (user_id,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0].strip()
+        except Exception as e:
+            print(f"[Alice DB] Error fetching token: {e}")
+        finally:
+            conn.close()
+    return os.getenv("YANDEX_OAUTH_TOKEN", "")
+
+
 YANDEX_STATION_ID = os.getenv("YANDEX_STATION_ID")
-
-# Standard Smart Home Quasar Client ID for direct token issuance
-YANDEX_OAUTH_URL = "https://oauth.yandex.ru/authorize?response_type=token&client_id=23cabbbdc6cd418abb4b49c3230e3e91"
+CLIENT_ID = os.getenv("YANDEX_CLIENT_ID", "23cabbbdc6cd418abb4b49c3230e3e91")
+YANDEX_OAUTH_URL = f"https://oauth.yandex.ru/authorize?response_type=token&client_id={CLIENT_ID}"
 IOT_API_BASE = "https://api.iot.yandex.net/v1.0"
 
 
@@ -34,7 +63,7 @@ def get_smart_home_devices(token=None):
     Fetches all devices in Artem's Yandex Smart Home.
     Returns list of smart speakers (Yandex Stations).
     """
-    tok = token or YANDEX_OAUTH_TOKEN
+    tok = token or get_yandex_token()
     if not tok:
         print("[Alice] ⚠️ YANDEX_OAUTH_TOKEN not configured.")
         return []
@@ -65,7 +94,7 @@ def speak_on_station(phrase: str, station_id: str = None, token: str = None):
     """
     Commands Alice on Yandex Station to speak a phrase out loud in the room.
     """
-    tok = token or YANDEX_OAUTH_TOKEN
+    tok = token or get_yandex_token()
     if not tok:
         print(f"[Alice] Cannot speak: YANDEX_OAUTH_TOKEN missing.")
         return False
@@ -121,38 +150,47 @@ def speak_on_station(phrase: str, station_id: str = None, token: str = None):
         return False
 
 
-def save_yandex_token(token: str):
-    """Saves YANDEX_OAUTH_TOKEN into E:\Documents\Lider\.env."""
+def save_yandex_token(token: str, user_id: int = 268747191) -> bool:
+    """Saves YANDEX_OAUTH_TOKEN into Neon DB user_settings table."""
     clean_token = token.strip()
     if clean_token.startswith("Bearer "):
         clean_token = clean_token[7:].strip()
 
-    env_lines = []
-    found = False
-    if os.path.exists(ENV_PATH):
-        with open(ENV_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("YANDEX_OAUTH_TOKEN="):
-                    env_lines.append(f"YANDEX_OAUTH_TOKEN={clean_token}\n")
-                    found = True
-                else:
-                    env_lines.append(line)
-
-    if not found:
-        env_lines.append(f"\nYANDEX_OAUTH_TOKEN={clean_token}\n")
-
-    with open(ENV_PATH, "w", encoding="utf-8") as f:
-        f.writelines(env_lines)
-
-    print(f"[Alice] ✅ YANDEX_OAUTH_TOKEN successfully saved to {ENV_PATH}")
-    return True
+    conn = get_db()
+    if not conn:
+        print("[Alice] ❌ Failed to connect to Neon DB to save token")
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id BIGINT NOT NULL DEFAULT 268747191,
+                    key VARCHAR(128) NOT NULL,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    PRIMARY KEY (user_id, key)
+                );
+                INSERT INTO user_settings (user_id, key, value, updated_at)
+                VALUES (%s, 'YANDEX_OAUTH_TOKEN', %s, NOW())
+                ON CONFLICT (user_id, key)
+                DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+            """, (user_id, clean_token))
+            conn.commit()
+            print(f"[Alice] ✅ YANDEX_OAUTH_TOKEN successfully saved to Neon DB for user {user_id}")
+            return True
+    except Exception as e:
+        print(f"[Alice] ❌ DB error saving token: {e}")
+        return False
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
     print("=" * 60)
     print("🎙️ YANDEX ALICE SMART HOME DISPATCHER")
     print("=" * 60)
-    if not YANDEX_OAUTH_TOKEN:
+    current_tok = get_yandex_token()
+    if not current_tok:
         print("\nДля подключения Яндекс Станции требуется однократно получить токен:")
         print(f"1. Перейдите по ссылке:\n   {YANDEX_OAUTH_URL}")
         print("2. Нажмите 'Разрешить' и скопируйте полученный токен.")
@@ -160,8 +198,8 @@ if __name__ == "__main__":
         if len(sys.argv) > 1:
             save_yandex_token(sys.argv[1])
     else:
-        print("[Alice] YANDEX_OAUTH_TOKEN is present.")
-        speakers = get_smart_home_devices()
+        print("[Alice] YANDEX_OAUTH_TOKEN is present in DB/environment.")
+        speakers = get_smart_home_devices(current_tok)
         print(f"[Alice] Found {len(speakers)} speaker(s):")
         for s in speakers:
             print(f"  • {s['name']} (Комната: {s['room']}, ID: {s['id']})")

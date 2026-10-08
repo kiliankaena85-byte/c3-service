@@ -34,6 +34,7 @@
       padding: 0;
       -webkit-tap-highlight-color: transparent;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      touch-action: manipulation;
     }
 
     body {
@@ -41,9 +42,10 @@
       color: var(--text-main);
       min-height: 100vh;
       padding: 14px;
-      padding-bottom: 95px;
+      padding-bottom: calc(95px + env(safe-area-inset-bottom, 0px));
       overflow-x: hidden;
       overscroll-behavior-y: contain;
+      touch-action: manipulation;
     }
 
     /* Top App Bar */
@@ -556,7 +558,7 @@
     /* Floating Add Button */
     .fab-add {
       position: fixed;
-      bottom: 24px;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px));
       right: 20px;
       width: 54px;
       height: 54px;
@@ -572,6 +574,7 @@
       cursor: pointer;
       z-index: 100;
       transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      touch-action: manipulation;
     }
 
     .fab-add:active {
@@ -842,11 +845,31 @@
       return `${year}-${month}-${day}`;
     }
 
+    // Normalized date key using client local date/time (prevents >21:00 MSK shifts)
+    function getTaskDateKey(t) {
+      if (!t || !t.due_at) return 'no_date';
+      const d = new Date(t.due_at);
+      if (isNaN(d.getTime())) return 'no_date';
+      return toLocalIso(d);
+    }
+
     const todayIso = toLocalIso(new Date());
+
+    function getAuthHeaders() {
+      const initData = window.Telegram?.WebApp?.initData || '';
+      return {
+        'X-Telegram-Init-Data': initData
+      };
+    }
 
     async function loadTasks(showIndicator = false) {
       try {
-        const resp = await fetch('/api/tasks');
+        const resp = await fetch('/api/tasks', {
+          headers: getAuthHeaders()
+        });
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
         allTasks = await resp.json();
         updateStats();
         renderCalendarGrid();
@@ -858,7 +881,7 @@
     }
 
     function updateStats() {
-      const todayCount = allTasks.filter(t => t.due_at && t.due_at.startsWith(todayIso) && t.status !== 'completed').length;
+      const todayCount = allTasks.filter(t => t.due_at && getTaskDateKey(t) === todayIso && t.status !== 'completed').length;
       const urgentCount = allTasks.filter(t => t.priority === 'high' && t.status !== 'completed').length;
       const doneCount = allTasks.filter(t => t.status === 'completed').length;
       
@@ -892,6 +915,7 @@
       if (btn) btn.classList.add('active');
       haptic('light');
       renderAgenda();
+      updateBackButton();
     }
 
     // Render 7-column Calendar Grid
@@ -965,7 +989,7 @@
       const dotsEl = document.createElement('div');
       dotsEl.className = 'day-dots';
       
-      const dayTasks = allTasks.filter(t => t.due_at && t.due_at.startsWith(iso) && t.status !== 'completed');
+      const dayTasks = allTasks.filter(t => t.due_at && getTaskDateKey(t) === iso && t.status !== 'completed');
       dayTasks.slice(0, 3).forEach(t => {
         const dot = document.createElement('div');
         dot.className = 'dot';
@@ -987,6 +1011,7 @@
         }
         renderCalendarGrid();
         renderAgenda();
+        updateBackButton();
 
         // Smooth scroll to target day if in agenda
         if (selectedDateIso) {
@@ -1018,7 +1043,7 @@
 
       // If a specific day in grid was selected, focus on it or show all with that day first
       if (selectedDateIso) {
-        filtered = filtered.filter(t => t.due_at && t.due_at.startsWith(selectedDateIso));
+        filtered = filtered.filter(t => t.due_at && getTaskDateKey(t) === selectedDateIso);
       }
 
       if (filtered.length === 0) {
@@ -1031,10 +1056,10 @@
         return;
       }
 
-      // Group tasks by Date ISO
+      // Group tasks by Local Date ISO
       const groups = {};
       filtered.forEach(t => {
-        const dateKey = t.due_at ? t.due_at.split('T')[0] : 'no_date';
+        const dateKey = getTaskDateKey(t);
         if (!groups[dateKey]) groups[dateKey] = [];
         groups[dateKey].push(t);
       });
@@ -1137,7 +1162,11 @@
     async function toggleTask(id) {
       haptic('light');
       try {
-        await fetch(`/api/tasks/${id}/toggle`, { method: 'POST' });
+        const resp = await fetch(`/api/tasks/${id}/toggle`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         loadTasks();
       } catch (e) {
         console.error(e);
@@ -1147,7 +1176,11 @@
     async function postponeTask(id) {
       haptic('light');
       try {
-        await fetch(`/api/tasks/${id}/postpone`, { method: 'POST' });
+        const resp = await fetch(`/api/tasks/${id}/postpone`, {
+          method: 'POST',
+          headers: getAuthHeaders()
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         loadTasks();
       } catch (e) {
         console.error(e);
@@ -1158,10 +1191,59 @@
       if (!confirm('Удалить эту задачу?')) return;
       haptic('light');
       try {
-        await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/tasks/${id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders()
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         loadTasks();
       } catch (e) {
         console.error(e);
+      }
+    }
+
+    function updateBackButton() {
+      const tg = window.Telegram?.WebApp;
+      if (!tg || !tg.BackButton) return;
+
+      const isAddModalOpen = document.getElementById('add-modal')?.classList.contains('open');
+      const isMaxModalOpen = document.getElementById('max-modal')?.classList.contains('open');
+      const hasFilter = (selectedDateIso !== null) || (currentCategoryFilter !== 'all');
+
+      if (isAddModalOpen || isMaxModalOpen || hasFilter) {
+        tg.BackButton.show();
+      } else {
+        tg.BackButton.show();
+      }
+    }
+
+    function handleBackButton() {
+      const isAddModalOpen = document.getElementById('add-modal')?.classList.contains('open');
+      const isMaxModalOpen = document.getElementById('max-modal')?.classList.contains('open');
+
+      if (isAddModalOpen) {
+        closeAddModal();
+        return;
+      }
+      if (isMaxModalOpen) {
+        closeMaxModal();
+        return;
+      }
+      if (selectedDateIso !== null) {
+        selectedDateIso = null;
+        renderCalendarGrid();
+        renderAgenda();
+        updateBackButton();
+        return;
+      }
+      if (currentCategoryFilter !== 'all') {
+        const allBtn = document.querySelector('.filter-chip');
+        setCategoryFilter('all', allBtn);
+        return;
+      }
+
+      if (window.Telegram?.WebApp?.close) {
+        window.Telegram.WebApp.close();
       }
     }
 
@@ -1173,10 +1255,12 @@
       const localIso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
       document.getElementById('task-datetime-input').value = localIso;
       document.getElementById('add-modal').classList.add('open');
+      updateBackButton();
     }
 
     function closeAddModal() {
       document.getElementById('add-modal').classList.remove('open');
+      updateBackButton();
     }
 
     async function submitNewTask() {
@@ -1190,9 +1274,12 @@
       const priority = document.getElementById('task-priority-input').value;
 
       try {
-        await fetch('/api/tasks', {
+        const resp = await fetch('/api/tasks', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...getAuthHeaders()
+          },
           body: JSON.stringify({
             title: title,
             category: category,
@@ -1200,12 +1287,16 @@
             priority: priority
           })
         });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.message || `HTTP ${resp.status}`);
+        }
         haptic('success');
         document.getElementById('task-title-input').value = '';
         closeAddModal();
         loadTasks();
       } catch (e) {
-        alert('Ошибка добавления задачи: ' + e);
+        alert('Ошибка добавления задачи: ' + e.message);
       }
     }
 
@@ -1214,10 +1305,26 @@
       document.getElementById('max-modal-text').innerText = 
         '📊 Сводка MAX формируется автоматически в 09:00 и 21:00 МСК.\n\nТекущие переписки:\n• Диана / Кружки: запланирована встреча на понедельник 10:00.\n• Тверьнефтепродукт: производство роликов для АЗС в штатном режиме.\n• Диарус: подготовка спецификаций.\n\nДля запуска внеочередного сбора переписок нажмите «Сводка MAX» в боте Telegram.';
       document.getElementById('max-modal').classList.add('open');
+      updateBackButton();
     }
 
     function closeMaxModal() {
       document.getElementById('max-modal').classList.remove('open');
+      updateBackButton();
+    }
+
+    // Init Telegram WebApp BackButton and tasks
+    if (window.Telegram?.WebApp) {
+      try {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+        if (window.Telegram.WebApp.BackButton) {
+          window.Telegram.WebApp.BackButton.onClick(handleBackButton);
+          updateBackButton();
+        }
+      } catch (err) {
+        console.warn('Telegram WebApp init warning:', err);
+      }
     }
 
     // Init
