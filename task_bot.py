@@ -21,6 +21,7 @@ import zoneinfo
 import threading
 import urllib.request
 import urllib.parse
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 
 # Ensure UTF-8 output
@@ -103,10 +104,17 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 );
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id BIGINT NOT NULL DEFAULT 268747191,
+                    key VARCHAR(128) NOT NULL,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    PRIMARY KEY (user_id, key)
+                );
             """)
             conn.commit()
         conn.close()
-        print("[DB] Initialized Neon PostgreSQL user_tasks table.")
+        print("[DB] Initialized Neon PostgreSQL user_tasks and user_settings tables.")
 
 
 def db_create_task(user_id, title, raw_input, category, due_at, remind_at, priority="medium", source="telegram_text", channels=None):
@@ -169,8 +177,9 @@ def db_complete_task(task_id):
     try:
         with conn.cursor() as cur:
             cur.execute("UPDATE user_tasks SET status = 'completed', updated_at = NOW() WHERE id = %s;", (task_id,))
+            updated = cur.rowcount > 0
             conn.commit()
-            return True
+            return updated
     finally:
         conn.close()
 
@@ -186,8 +195,9 @@ def db_postpone_task(task_id, hours=1):
                 SET remind_at = NOW() + INTERVAL '%s hour', reminder_sent = FALSE, updated_at = NOW() 
                 WHERE id = %s;
             """, (hours, task_id))
+            updated = cur.rowcount > 0
             conn.commit()
-            return True
+            return updated
     finally:
         conn.close()
 
@@ -464,6 +474,26 @@ def parse_task_text_gemini(user_text, laya_hints=None):
     }
 
 
+def extract_task_id(text: str) -> Optional[int]:
+    """
+    Extracts an explicit task ID from user text when completing tasks.
+    Guards against misinterpreting time expressions (e.g. '18:00', '21.30') as task IDs.
+    """
+    if not text:
+        return None
+    # Remove time patterns like 18:00, 18.30
+    clean = re.sub(r'\b\d{1,2}[:.]\d{2}\b', '', text)
+    # 1. Explicit task markers: #12, №12, задачу 12, номер 12, id 12
+    m = re.search(r'(?:#|№|задач\w*\s*#?|номер\s*#?|id\s*#?)\s*(\d+)', clean, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    # 2. Command + single number: "выполнил 5", "сделал 14", "закрыл 3"
+    m = re.search(r'^\s*(?:выполнил|сделал|закрыл|готово)\s+#?(\d+)\s*$', clean, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 # -------------------------------------------------------------
 # Telegram Message Processor
 # -------------------------------------------------------------
@@ -515,7 +545,7 @@ def handle_message(msg):
         msg_lines = ["📋 **ВАШИ АКТИВНЫЕ ЗАДАЧИ:**\n"]
         for t in tasks:
             due_msk = to_msk(t['due_at'])
-            due_str = due_msk.strftime('%d.%m в %H:%M') if due_msk else "без срока"
+            due_str = due_msk.strftime('%d.%m в %H:%M (МСК)') if due_msk else "без срока"
             msg_lines.append(f"• **#{t['id']} {t['title']}**\n   📂 *{t['category']}* | ⏰ {due_str} | Важность: {t['priority']}")
 
         inline_cal = {
@@ -579,9 +609,10 @@ def handle_message(msg):
             send_message(chat_id, f"❌ Ошибка отправки на телефон: {pe}")
         return
 
-    # 6. Yandex OAuth Token Submission
-    if text.startswith("y0_") or text.startswith("/token"):
-        clean_tok = text.replace("/token", "").strip()
+    # 6. Yandex OAuth Token Submission (handles raw token, /token command, or copied redirect URL)
+    tok_match = re.search(r'(y0_[A-Za-z0-9_\-]+)', text)
+    if tok_match or text.startswith("/token"):
+        clean_tok = tok_match.group(1) if tok_match else text.replace("/token", "").strip()
         if clean_tok.startswith("y0_"):
             try:
                 from yandex_alice import save_yandex_token, get_smart_home_devices
@@ -619,6 +650,17 @@ def handle_message(msg):
     print(f"[LAYA Decision] Intent: {laya['laya_intent']} | Urgency: {laya['urgency_score']}/5 | Channels: {laya['target_channels']} ({laya['laya_latency_ms']}ms)")
 
     # Fast routing based on Laya intent
+    if laya["laya_intent"] == "GREETING":
+        clean_lower = raw_input_text.lower()
+        if any(w in clean_lower for w in ["спасибо", "благодарю"]):
+            reply_greeting = "Всегда пожалуйста, Артём! Рад помочь."
+        elif any(w in clean_lower for w in ["пока", "до свидания", "доброй ночи"]):
+            reply_greeting = "Хорошего отдыха, Артём! На связи."
+        else:
+            reply_greeting = "Приветствую, Артём! Чем могу помочь по делам или расписанию?"
+        send_message(chat_id, reply_greeting)
+        return
+
     if laya["laya_intent"] == "MAX_SUMMARY":
         send_message(chat_id, "⏳ LAYA перенаправила запрос: запускаю сбор и анализ переписок MAX...")
         try:
@@ -629,9 +671,8 @@ def handle_message(msg):
         return
 
     if laya["laya_intent"] == "COMPLETE_TASK" or any(w in raw_input_text.lower() for w in ["выполнил", "сделал", "закрыл", "готово", "удали задачу"]):
-        id_match = re.search(r'#?(\d+)', raw_input_text)
-        if id_match:
-            target_id = int(id_match.group(1))
+        target_id = extract_task_id(raw_input_text)
+        if target_id is not None:
             if db_complete_task(target_id):
                 send_message(chat_id, f"🎉 **Отлично!** Задача #{target_id} помечена как выполненная.")
             else:
@@ -663,7 +704,7 @@ def handle_message(msg):
         msg_lines = ["📋 **ВАШИ АКТИВНЫЕ ЗАДАЧИ:**\n"]
         for t in tasks:
             due_msk = to_msk(t['due_at'])
-            due_str = due_msk.strftime('%d.%m в %H:%M') if due_msk else "без срока"
+            due_str = due_msk.strftime('%d.%m в %H:%M (МСК)') if due_msk else "без срока"
             msg_lines.append(f"• **#{t['id']} {t['title']}** [{t['category']}] — ⏰ *{due_str}*")
         inline_cal = {
             "inline_keyboard": [
@@ -782,7 +823,14 @@ def reminder_worker():
                 print(f"[Reminder Worker] Firing reminder for Task #{task_id}: '{title}' | Channels: {target_channels}")
                 
                 due_msk = to_msk(due_at)
-                due_str = due_msk.strftime('%H:%M (МСК)') if due_msk else "сейчас"
+                if due_msk:
+                    now_msk = datetime.datetime.now(MSK)
+                    if due_msk.date() == now_msk.date():
+                        due_str = due_msk.strftime('%H:%M (МСК)')
+                    else:
+                        due_str = due_msk.strftime('%d.%m в %H:%M (МСК)')
+                else:
+                    due_str = "сейчас"
                 text = (
                     f"⏰ **НАПОМИНАНИЕ!**\n\n"
                     f"🔔 **{title}**\n"

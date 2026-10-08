@@ -248,21 +248,23 @@ def is_authorized_request(request) -> bool:
     Returns True if authorized, False otherwise.
     """
     init_data = request.headers.get("X-Telegram-Init-Data") or request.query_params.get("initData") or ""
+    query_token = request.query_params.get("token") or request.query_params.get("auth") or ""
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     calendar_token = os.getenv("CALENDAR_AUTH_TOKEN")
     auth_header = request.headers.get("Authorization", "").strip()
 
     # 1. Bearer / Token authorization check
     if calendar_token:
-        if auth_header == f"Bearer {calendar_token}" or init_data == calendar_token:
+        if auth_header == f"Bearer {calendar_token}" or init_data == calendar_token or query_token == calendar_token:
             return True
     if bot_token:
-        if auth_header == f"Bearer {bot_token}" or init_data == bot_token:
+        if auth_header == f"Bearer {bot_token}" or init_data == bot_token or query_token == bot_token:
             return True
 
     # 2. Cryptographic Telegram WebApp initData verification
-    if init_data and bot_token and ("hash=" in init_data or "&" in init_data):
-        if verify_telegram_init_data(init_data, bot_token):
+    check_data = init_data or query_token
+    if check_data and bot_token and ("hash=" in check_data or "&" in check_data):
+        if verify_telegram_init_data(check_data, bot_token):
             return True
 
     # 3. Allow unauthenticated requests only in explicit debug / local test mode
@@ -366,10 +368,17 @@ async def api_create_task(request):
         body = await request.json()
     except Exception:
         body = {}
-    title = body.get("title", "Новая задача").strip()
+    title_raw = body.get("title", "")
+    if not title_raw or not str(title_raw).strip():
+        return JSONResponse({"status": "error", "message": "Название задачи обязательно"}, status_code=400)
+    title = str(title_raw).strip()
     category = body.get("category", "Работа / Заказчики")
     priority = body.get("priority", "medium")
     due_at = body.get("due_at")
+    if due_at and (not str(due_at).strip() or str(due_at).strip().lower() in ("null", "none")):
+        due_at = None
+    elif due_at:
+        due_at = str(due_at).strip()
     
     conn = get_db()
     if not conn:

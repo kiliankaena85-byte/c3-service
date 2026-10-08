@@ -856,10 +856,17 @@
     const todayIso = toLocalIso(new Date());
 
     function getAuthHeaders() {
-      const initData = window.Telegram?.WebApp?.initData || '';
-      return {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token') || urlParams.get('auth') || '';
+      const urlInitData = urlParams.get('initData') || '';
+      const initData = window.Telegram?.WebApp?.initData || urlInitData || urlToken || '';
+      const headers = {
         'X-Telegram-Init-Data': initData
       };
+      if (urlToken) {
+        headers['Authorization'] = `Bearer ${urlToken}`;
+      }
+      return headers;
     }
 
     async function loadTasks(showIndicator = false) {
@@ -868,6 +875,17 @@
           headers: getAuthHeaders()
         });
         if (!resp.ok) {
+          if (resp.status === 401) {
+            const feed = document.getElementById('agenda-feed');
+            if (feed) {
+              feed.innerHTML = `
+                <div class="empty-day-stub" style="padding: 24px 16px; border-color: rgba(239, 68, 68, 0.3);">
+                  <p style="font-size: 14px; font-weight: 700; color: var(--accent-urgent); margin-bottom: 6px;">🔒 Требуется авторизация</p>
+                  <p style="color: var(--text-muted); font-size: 12px; line-height: 1.4;">Откройте календарь через Telegram бота @c3_ru_bot или передайте ?token=...</p>
+                </div>
+              `;
+            }
+          }
           throw new Error(`HTTP ${resp.status}`);
         }
         allTasks = await resp.json();
@@ -1213,7 +1231,7 @@
       if (isAddModalOpen || isMaxModalOpen || hasFilter) {
         tg.BackButton.show();
       } else {
-        tg.BackButton.show();
+        tg.BackButton.hide();
       }
     }
 

@@ -22,7 +22,7 @@ load_dotenv('E:/Documents/Lider/.env')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from laya_assistant import LayaAssistantDecisionEngine
-from task_bot import to_msk, MSK
+from task_bot import to_msk, MSK, extract_task_id, db_complete_task
 import yandex_alice
 import phone_notify
 import server
@@ -64,6 +64,33 @@ def test_intent_and_phantom_prevention():
     print("  -> Passed!")
 
 
+def test_task_id_parsing_vs_time():
+    print("[*] Testing Task ID Parsing vs Time Expressions...")
+    # Explicit task ID should be extracted
+    assert extract_task_id("выполнил #5") == 5
+    assert extract_task_id("сделал №12") == 12
+    assert extract_task_id("закрыл задачу 7") == 7
+    assert extract_task_id("задача 4 готова") == 4
+    assert extract_task_id("выполнил 3") == 3
+
+    # Time expressions and counts MUST NOT be misinterpreted as task IDs
+    assert extract_task_id("Сделал в 18:00") is None
+    assert extract_task_id("выполнил в 20:30") is None
+    assert extract_task_id("сделал 2 дела") is None
+    assert extract_task_id("выполнил") is None
+    assert extract_task_id("сделал задачу") is None
+
+    print("  -> Passed!")
+
+
+def test_db_complete_task_rowcount():
+    print("[*] Testing db_complete_task rowcount guard...")
+    # A non-existent task ID must return False, not True
+    result = db_complete_task(-999999)
+    assert result is False, f"Expected False for non-existent task ID -999999, got {result}"
+    print("  -> Passed!")
+
+
 def test_server_auth():
     print("[*] Testing Server /api/tasks Authentication...")
     class DummyRequest:
@@ -75,12 +102,43 @@ def test_server_auth():
     req_anon = DummyRequest()
     assert not server.is_authorized_request(req_anon), "Anonymous request should be rejected"
 
-    # Authorized with bot token
+    # Authorized with bot token in header
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if token:
         req_token = DummyRequest(headers={"X-Telegram-Init-Data": token})
-        assert server.is_authorized_request(req_token), "Request with valid bot token should be authorized"
+        assert server.is_authorized_request(req_token), "Request with valid bot token in header should be authorized"
 
+        # Authorized with bot token in query param
+        req_query = DummyRequest(query_params={"token": token})
+        assert server.is_authorized_request(req_query), "Request with valid bot token in query param should be authorized"
+
+    print("  -> Passed!")
+
+
+def test_api_create_task_validation():
+    print("[*] Testing server.py api_create_task Title Validation...")
+    import asyncio
+    class MockRequest:
+        def __init__(self, json_data, headers=None, query_params=None):
+            self._json_data = json_data
+            self.headers = headers or {}
+            self.query_params = query_params or {}
+        async def json(self):
+            return self._json_data
+
+    async def _run():
+        token = os.getenv("TELEGRAM_BOT_TOKEN") or "test_tok"
+        # 1. Empty title -> 400
+        req_empty = MockRequest({"title": "   "}, headers={"X-Telegram-Init-Data": token})
+        res_empty = await server.api_create_task(req_empty)
+        assert res_empty.status_code == 400, f"Expected 400 for empty title, got {res_empty.status_code}"
+
+        # 2. Missing title -> 400
+        req_missing = MockRequest({}, headers={"X-Telegram-Init-Data": token})
+        res_missing = await server.api_create_task(req_missing)
+        assert res_missing.status_code == 400, f"Expected 400 for missing title, got {res_missing.status_code}"
+
+    asyncio.run(_run())
     print("  -> Passed!")
 
 
@@ -119,14 +177,16 @@ def test_calendar_html_ux():
     # 2. touch-action manipulation
     assert "touch-action: manipulation;" in html, "Missing touch-action in calendar.html"
 
-    # 3. BackButton support
+    # 3. BackButton support and proper hide()
     assert "Telegram.WebApp.BackButton" in html or "BackButton" in html, "Missing BackButton in calendar.html"
+    assert "BackButton.hide()" in html, "Missing BackButton.hide() in calendar.html"
 
     # 4. getTaskDateKey
     assert "getTaskDateKey" in html, "Missing getTaskDateKey in calendar.html"
 
-    # 5. X-Telegram-Init-Data header
+    # 5. X-Telegram-Init-Data header & URL token support
     assert "X-Telegram-Init-Data" in html, "Missing X-Telegram-Init-Data in calendar.html"
+    assert "urlParams.get('token')" in html, "Missing urlParams.get('token') in calendar.html"
 
     # 6. submitNewTask error checking
     assert "!resp.ok" in html, "Missing !resp.ok check in calendar.html"
@@ -149,7 +209,10 @@ if __name__ == "__main__":
     print("=" * 60)
     test_timezone_msk()
     test_intent_and_phantom_prevention()
+    test_task_id_parsing_vs_time()
+    test_db_complete_task_rowcount()
     test_server_auth()
+    test_api_create_task_validation()
     test_phone_notify_secure_topic()
     test_yandex_alice_db()
     test_calendar_html_ux()
