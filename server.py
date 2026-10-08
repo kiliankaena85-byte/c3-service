@@ -188,9 +188,130 @@ async def keep_alive_loop():
         await asyncio.sleep(540)  # Ping every 9 minutes (Render free timeout is 15 minutes)
 
 
+def get_db():
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        try:
+            import psycopg2
+            return psycopg2.connect(db_url)
+        except Exception as e:
+            print(f"[DB Server] Connect error: {e}")
+    return None
+
+
+async def calendar_page(request):
+    cal_file = os.path.join(BASE_DIR, "static", "calendar.html")
+    if os.path.exists(cal_file):
+        with open(cal_file, "r", encoding="utf-8") as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<h1>Calendar Mini App is loading...</h1>")
+
+
+async def api_get_tasks(request):
+    conn = get_db()
+    if not conn:
+        return JSONResponse([])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, category, priority, due_at, remind_at, status, target_channels
+                FROM user_tasks
+                ORDER BY due_at ASC NULLS LAST, id DESC;
+            """)
+            tasks = []
+            for r in cur.fetchall():
+                tasks.append({
+                    "id": r[0],
+                    "title": r[1],
+                    "category": r[2],
+                    "priority": r[3],
+                    "due_at": r[4].isoformat() if r[4] else None,
+                    "remind_at": r[5].isoformat() if r[5] else None,
+                    "status": r[6],
+                    "target_channels": r[7] if len(r) > 7 else []
+                })
+            return JSONResponse(tasks)
+    finally:
+        conn.close()
+
+
+async def api_toggle_task(request):
+    task_id = request.path_params.get("task_id")
+    conn = get_db()
+    if not conn:
+        return JSONResponse({"status": "error"})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_tasks 
+                SET status = CASE WHEN status = 'completed' THEN 'pending' ELSE 'completed' END,
+                    updated_at = NOW()
+                WHERE id = %s;
+            """, (task_id,))
+            conn.commit()
+            return JSONResponse({"status": "ok"})
+    finally:
+        conn.close()
+
+
+async def api_postpone_task(request):
+    task_id = request.path_params.get("task_id")
+    conn = get_db()
+    if not conn:
+        return JSONResponse({"status": "error"})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_tasks 
+                SET remind_at = NOW() + INTERVAL '1 hour', reminder_sent = FALSE, updated_at = NOW()
+                WHERE id = %s;
+            """, (task_id,))
+            conn.commit()
+            return JSONResponse({"status": "ok"})
+    finally:
+        conn.close()
+
+
+async def api_create_task(request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    title = body.get("title", "Новая задача")
+    category = body.get("category", "Личные дела")
+    conn = get_db()
+    if not conn:
+        return JSONResponse({"status": "error"})
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_tasks (user_id, title, raw_input, category, due_at, remind_at)
+                VALUES (268747191, %s, %s, %s, NOW() + INTERVAL '2 hour', NOW() + INTERVAL '1 hour')
+                RETURNING id;
+            """, (title, title, category))
+            tid = cur.fetchone()[0]
+            conn.commit()
+            return JSONResponse({"status": "ok", "task_id": tid})
+    finally:
+        conn.close()
+
+
+async def api_max_digest(request):
+    return JSONResponse({
+        "status": "ok",
+        "digest": "📊 Сводка MAX формируется автоматически в 09:00 и 21:00 МСК, а также по команде /max в боте."
+    })
+
+
 routes = [
     Route("/", endpoint=index),
+    Route("/calendar", endpoint=calendar_page, methods=["GET"]),
     Route("/api/health", endpoint=api_health, methods=["GET"]),
+    Route("/api/tasks", endpoint=api_get_tasks, methods=["GET"]),
+    Route("/api/tasks", endpoint=api_create_task, methods=["POST"]),
+    Route("/api/tasks/{task_id}/toggle", endpoint=api_toggle_task, methods=["POST"]),
+    Route("/api/tasks/{task_id}/postpone", endpoint=api_postpone_task, methods=["POST"]),
+    Route("/api/max/digest", endpoint=api_max_digest, methods=["GET"]),
     Route("/api/analyze", endpoint=api_analyze, methods=["POST"]),
     Route("/api/roi", endpoint=api_roi, methods=["POST"]),
     Route("/api/logistics", endpoint=api_logistics, methods=["GET", "POST"]),

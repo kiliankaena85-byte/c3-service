@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Календарь Задач</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: var(--tg-theme-bg-color, #0f172a);
+      --card-bg: var(--tg-theme-secondary-bg-color, #1e293b);
+      --text: var(--tg-theme-text-color, #f8fafc);
+      --subtext: var(--tg-theme-hint-color, #94a3b8);
+      --accent: var(--tg-theme-button-color, #38bdf8);
+      --accent-text: var(--tg-theme-button-text-color, #0f172a);
+      --border: rgba(255, 255, 255, 0.08);
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 16px;
+      padding-bottom: 90px;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .title-group h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .title-group p {
+      font-size: 13px;
+      color: var(--subtext);
+      margin-top: 2px;
+    }
+
+    .btn-max {
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      color: #fff;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(14, 165, 233, 0.25);
+    }
+
+    /* Date Strip */
+    .calendar-strip-wrapper {
+      margin-bottom: 20px;
+    }
+
+    .calendar-strip {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+
+    .calendar-strip::-webkit-scrollbar {
+      display: none;
+    }
+
+    .day-card {
+      flex: 0 0 54px;
+      height: 72px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+    }
+
+    .day-card.active {
+      background: var(--accent);
+      color: var(--accent-text);
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(56, 189, 248, 0.3);
+    }
+
+    .day-name {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      opacity: 0.7;
+    }
+
+    .day-num {
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    .day-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--warning);
+      margin-top: 4px;
+    }
+
+    .day-card.active .day-dot {
+      background: var(--accent-text);
+    }
+
+    /* Filter Tabs */
+    .filter-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .filter-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-btn {
+      background: var(--card-bg);
+      color: var(--subtext);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* Task List */
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--subtext);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .tasks-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .task-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+
+    .task-card.completed {
+      opacity: 0.5;
+    }
+
+    .task-card.completed .task-title {
+      text-decoration: line-through;
+    }
+
+    /* Checkbox */
+    .checkbox {
+      width: 24px;
+      height: 24px;
+      border-radius: 8px;
+      border: 2px solid var(--subtext);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      margin-top: 1px;
+      transition: all 0.2s ease;
+    }
+
+    .task-card.completed .checkbox {
+      background: var(--success);
+      border-color: var(--success);
+      color: white;
+    }
+
+    .task-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .task-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .task-category {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+      background: rgba(56, 189, 248, 0.1);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .task-time {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--subtext);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .task-time.urgent {
+      color: var(--danger);
+    }
+
+    .task-title {
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.35;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+
+    .task-footer {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn-postpone {
+      font-size: 11px;
+      color: var(--subtext);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .btn-postpone:active {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Floating Quick Add */
+    .quick-add {
+      position: fixed;
+      bottom: 20px;
+      left: 16px;
+      right: 16px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 6px 8px 6px 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(16px);
+    }
+
+    .quick-add input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+    }
+
+    .quick-add input::placeholder {
+      color: var(--subtext);
+    }
+
+    .quick-add button {
+      background: var(--accent);
+      color: var(--accent-text);
+      border: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    /* Modal Sheet */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: flex-end;
+      z-index: 100;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-sheet {
+      background: var(--card-bg);
+      width: 100%;
+      max-height: 80vh;
+      border-radius: 24px 24px 0 0;
+      padding: 24px 20px;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+      animation: slideUp 0.25s ease-out;
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .modal-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--subtext);
+      font-size: 22px;
+      cursor: pointer;
+    }
+
+    .max-digest-content {
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--subtext);
+    }
+
+    .empty-state svg {
+      width: 48px;
+      height: 48px;
+      margin-bottom: 12px;
+      opacity: 0.3;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="title-group">
+      <h1>Календарь Задач</h1>
+      <p id="current-date-label">Загрузка...</p>
+    </div>
+    <button class="btn-max" onclick="openMaxModal()">
+      <span>📊</span> Сводка MAX
+    </button>
+  </div>
+
+  <!-- Calendar Strip -->
+  <div class="calendar-strip-wrapper">
+    <div class="calendar-strip" id="calendar-strip"></div>
+  </div>
+
+  <!-- Filter Tabs -->
+  <div class="filter-tabs">
+    <button class="tab-btn active" onclick="setFilter('all', this)">Все дела</button>
+    <button class="tab-btn" onclick="setFilter('today', this)">Сегодня</button>
+    <button class="tab-btn" onclick="setFilter('Покупки / Ozon', this)">Ozon / Покупки</button>
+    <button class="tab-btn" onclick="setFilter('Работа / Заказчики', this)">Работа</button>
+  </div>
+
+  <!-- Task List Section -->
+  <div class="section-title">
+    <span id="list-title">Задачи на день</span>
+    <span id="task-count" style="font-size: 12px; opacity: 0.7;">0 задач</span>
+  </div>
+
+  <div class="tasks-list" id="tasks-list">
+    <div class="empty-state">Загрузка ваших задач...</div>
+  </div>
+
+  <!-- Quick Add Bar -->
+  <div class="quick-add">
+    <input type="text" id="quick-input" placeholder="Добавить задачу голосом или текстом..." onkeydown="if(event.key==='Enter') quickAddTask()">
+    <button onclick="quickAddTask()">+</button>
+  </div>
+
+  <!-- Modal Sheet for MAX Summary -->
+  <div class="modal-overlay" id="max-modal" onclick="if(event.target===this) closeMaxModal()">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h2>📊 Сводка MAX</h2>
+        <button class="modal-close" onclick="closeMaxModal()">&times;</button>
+      </div>
+      <div class="max-digest-content" id="max-digest-text">
+        Загрузка свежей аналитики из мессенджера MAX...
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.expand();
+      tg.ready();
+    }
+
+    const API_BASE = window.location.origin;
+    let allTasks = [];
+    let currentFilter = 'all';
+    let selectedDate = new Date().toISOString().split('T')[0];
+
+    // Days setup
+    const DAYS_RU = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+    const MONTHS_RU = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+    function initCalendarStrip() {
+      const strip = document.getElementById('calendar-strip');
+      strip.innerHTML = '';
+      const today = new Date();
+
+      document.getElementById('current-date-label').innerText = 
+        `${DAYS_RU[today.getDay()]}, ${today.getDate()} ${MONTHS_RU[today.getMonth()]}`;
+
+      // 10 days starting from 2 days ago
+      for (let i = -2; i < 8; i++) {
+        const d = new Date();
+        d.setDate(today.getDate() + i);
+        const iso = d.toISOString().split('T')[0];
+
+        const card = document.createElement('div');
+        card.className = `day-card ${iso === selectedDate ? 'active' : ''}`;
+        card.onclick = () => selectDate(iso, card);
+
+        const dayName = document.createElement('div');
+        dayName.className = 'day-name';
+        dayName.innerText = DAYS_RU[d.getDay()];
+
+        const dayNum = document.createElement('div');
+        dayNum.className = 'day-num';
+        dayNum.innerText = d.getDate();
+
+        const dot = document.createElement('div');
+        dot.className = 'day-dot';
+        dot.id = `dot-${iso}`;
+        dot.style.visibility = 'hidden';
+
+        card.appendChild(dayName);
+        card.appendChild(dayNum);
+        card.appendChild(dot);
+        strip.appendChild(card);
+      }
+    }
+
+    function selectDate(iso, cardEl) {
+      selectedDate = iso;
+      document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active'));
+      if (cardEl) cardEl.classList.add('active');
+      haptic();
+      renderTasks();
+    }
+
+    function setFilter(cat, btnEl) {
+      currentFilter = cat;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      if (btnEl) btnEl.classList.add('active');
+      haptic();
+      renderTasks();
+    }
+
+    function haptic() {
+      if (tg?.HapticFeedback) {
+        tg.HapticFeedback.impactOccurred('light');
+      }
+    }
+
+    async function loadTasks() {
+      try {
+        const res = await fetch(`${API_BASE}/api/tasks`);
+        allTasks = await res.json();
+        updateDots();
+        renderTasks();
+      } catch (e) {
+        console.error('Error loading tasks:', e);
+        document.getElementById('tasks-list').innerHTML = 
+          `<div class="empty-state">Не удалось загрузить задачи. Проверьте подключение к серверу.</div>`;
+      }
+    }
+
+    function updateDots() {
+      allTasks.forEach(t => {
+        if (t.due_at) {
+          const iso = t.due_at.split('T')[0];
+          const dot = document.getElementById(`dot-${iso}`);
+          if (dot) dot.style.visibility = 'visible';
+        }
+      });
+    }
+
+    function renderTasks() {
+      const container = document.getElementById('tasks-list');
+      let filtered = allTasks;
+
+      if (currentFilter === 'today') {
+        const todayIso = new Date().toISOString().split('T')[0];
+        filtered = filtered.filter(t => t.due_at && t.due_at.startsWith(todayIso));
+        document.getElementById('list-title').innerText = 'Задачи на сегодня';
+      } else if (currentFilter !== 'all') {
+        filtered = filtered.filter(t => t.category === currentFilter);
+        document.getElementById('list-title').innerText = currentFilter;
+      } else {
+        // Filter by selected calendar date if date clicked
+        const dateTasks = filtered.filter(t => t.due_at && t.due_at.startsWith(selectedDate));
+        if (dateTasks.length > 0) {
+          filtered = dateTasks;
+          document.getElementById('list-title').innerText = `Задачи на ${selectedDate}`;
+        } else {
+          document.getElementById('list-title').innerText = 'Все активные задачи';
+        }
+      }
+
+      document.getElementById('task-count').innerText = `${filtered.length} задач`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <p>На этот день задач нет. Всё свободно!</p>
+          </div>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(t => {
+        let timeStr = 'Без срока';
+        let isUrgent = false;
+        if (t.due_at) {
+          const d = new Date(t.due_at);
+          timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          if (t.priority === 'high') isUrgent = true;
+        }
+
+        const isDone = t.status === 'completed';
+
+        return `
+          <div class="task-card ${isDone ? 'completed' : ''}" id="task-${t.id}">
+            <div class="checkbox" onclick="toggleTask(${t.id})">
+              ${isDone ? '✓' : ''}
+            </div>
+            <div class="task-content">
+              <div class="task-header">
+                <span class="task-category">${t.category || 'Общее'}</span>
+                <span class="task-time ${isUrgent ? 'urgent' : ''}">⏰ ${timeStr}</span>
+              </div>
+              <div class="task-title">${escapeHtml(t.title)}</div>
+              <div class="task-footer">
+                <button class="btn-postpone" onclick="postponeTask(${t.id})">⏰ +1 час</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function toggleTask(taskId) {
+      haptic();
+      const card = document.getElementById(`task-${taskId}`);
+      card.classList.toggle('completed');
+
+      try {
+        await fetch(`${API_BASE}/api/tasks/${taskId}/toggle`, { method: 'POST' });
+        loadTasks();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function postponeTask(taskId) {
+      haptic();
+      try {
+        await fetch(`${API_BASE}/api/tasks/${taskId}/postpone`, { method: 'POST' });
+        loadTasks();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function quickAddTask() {
+      const input = document.getElementById('quick-input');
+      const val = input.value.trim();
+      if (!val) return;
+
+      haptic();
+      input.value = '';
+
+      try {
+        await fetch(`${API_BASE}/api/tasks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: jsonString({ title: val, due_date: selectedDate })
+        });
+        loadTasks();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function jsonString(obj) {
+      return JSON.stringify(obj);
+    }
+
+    async function openMaxModal() {
+      haptic();
+      const modal = document.getElementById('max-modal');
+      modal.classList.add('open');
+      document.getElementById('max-digest-text').innerText = 'Загрузка свежей аналитики из мессенджера MAX...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/max/digest`);
+        const data = await res.json();
+        document.getElementById('max-digest-text').innerText = data.digest || 'Сводка пока формируется.';
+      } catch (e) {
+        document.getElementById('max-digest-text').innerText = 'Не удалось загрузить сводку MAX.';
+      }
+    }
+
+    function closeMaxModal() {
+      haptic();
+      document.getElementById('max-modal').classList.remove('open');
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.innerText = text;
+      return div.innerHTML;
+    }
+
+    // Startup
+    initCalendarStrip();
+    loadTasks();
+    setInterval(loadTasks, 15000); // 15s auto-refresh
+  </script>
+</body>
+</html>
