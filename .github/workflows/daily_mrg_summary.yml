@@ -1,0 +1,25 @@
+name: Daily MRG Telegram Summary
+
+on:
+  schedule:
+    # 18:00 UTC = 21:00 MSK (Каждый день ровно в 21:00 по Москве)
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  trigger-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger MRG Summary via Render Endpoint
+        run: |
+          echo "Triggering MRG summary at 21:00 MSK via Render API..."
+          RESPONSE=$(curl -s -m 120 "https://c3-service-il4m.onrender.com/api/mrg/summary" || echo "curl_failed")
+          echo "Response: $RESPONSE"
+          if [[ "$RESPONSE" == *"ok"* ]]; then
+            echo "Successfully generated and delivered via Render!"
+            exit 0
+          fi
+          echo "Render direct trigger returned non-ok, waking up service..."
+          curl -s -m 30 "https://c3-service-il4m.onrender.com/api/health" || true
+          sleep 15
+          curl -s -m 120 "https://c3-service-il4m.onrender.com/api/mrg/summary" || echo "Done attempt 2"

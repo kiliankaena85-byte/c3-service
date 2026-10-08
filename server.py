@@ -154,6 +154,18 @@ async def api_logistics(request):
     return JSONResponse(default_res)
 
 
+async def api_mrg_summary(request):
+    """
+    On-demand trigger for MRG daily summary generation and Telegram delivery
+    """
+    try:
+        from mrg_daily_daemon import execute_daily_cycle
+        summary = await execute_daily_cycle(send_dm=True)
+        return JSONResponse({"status": "ok", "delivered": True, "length": len(summary)})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @asynccontextmanager
 async def lifespan(app):
     task = asyncio.create_task(keep_alive_loop())
@@ -182,6 +194,7 @@ routes = [
     Route("/api/analyze", endpoint=api_analyze, methods=["POST"]),
     Route("/api/roi", endpoint=api_roi, methods=["POST"]),
     Route("/api/logistics", endpoint=api_logistics, methods=["GET", "POST"]),
+    Route("/api/mrg/summary", endpoint=api_mrg_summary, methods=["GET", "POST"]),
 ]
 
 app = Starlette(debug=True, routes=routes, lifespan=lifespan)
