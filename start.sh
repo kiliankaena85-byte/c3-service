@@ -1,8 +1,6 @@
 #!/bin/bash
 set -e
 
-echo "[*] Запуск автономного ассистента-секретаря Артёма (task_bot.py)..."
-python -u task_bot.py &
-
-echo "[*] Запуск Web-сервера C3 и Календаря (server.py) на порту ${PORT:-10000}..."
+echo "[*] Запуск единого ядра C3 и Ассистента Артёма (server.py) на порту ${PORT:-10000}..."
+echo "[*] Режим: Webhooks + Neon Connection Pool + Фоновые напоминания + Keep-Alive"
 exec python -u server.py

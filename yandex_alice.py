@@ -14,17 +14,20 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
-def get_db():
-    db_url = os.getenv("DATABASE_URL")
-    if db_url:
-        try:
-            import psycopg2
-            conn = psycopg2.connect(db_url)
-            conn.set_client_encoding('UTF8')
-            return conn
-        except Exception as e:
-            print(f"[Alice DB] Connection error: {e}")
-    return None
+try:
+    from db import get_db
+except ImportError:
+    def get_db():
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            try:
+                import psycopg2
+                conn = psycopg2.connect(db_url)
+                conn.set_client_encoding('UTF8')
+                return conn
+            except Exception as e:
+                print(f"[Alice DB] Connection error: {e}")
+        return None
 
 
 def get_yandex_token(user_id: int = 268747191) -> str:

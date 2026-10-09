@@ -10,6 +10,7 @@ import hmac
 import hashlib
 from urllib.parse import parse_qsl
 import asyncio
+import threading
 import requests
 import uvicorn
 from contextlib import asynccontextmanager
@@ -22,6 +23,15 @@ from starlette.staticfiles import StaticFiles
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
+
+from db import get_db, close_pool
+from task_bot import (
+    process_telegram_update,
+    set_telegram_webhook,
+    reminder_worker,
+    init_db,
+    setup_bot_interface
+)
 
 from c3_engine import LayaStairClassifier, GeminiStairVisionEngine
 from c3_logistics import C3RegionalLogistics
@@ -171,9 +181,46 @@ async def api_mrg_summary(request):
 
 @asynccontextmanager
 async def lifespan(app):
-    task = asyncio.create_task(keep_alive_loop())
+    print("=" * 60)
+    print("🚀 UNIFIED C3 & PERSONAL ASSISTANT CLOUD ENGINE (RENDER)")
+    print("=" * 60)
+
+    # 1. Initialize DB schema
+    try:
+        init_db()
+    except Exception as e:
+        print(f"[Lifespan] DB init warning: {e}")
+
+    # 2. Configure Telegram interface and Webhook
+    try:
+        setup_bot_interface()
+        public_url = os.getenv("RENDER_EXTERNAL_URL", "https://c3-service-il4m.onrender.com")
+        webhook_url = f"{public_url.rstrip('/')}/api/telegram-webhook"
+        secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "c3_artem_secure_webhook_secret_2026")
+        set_telegram_webhook(webhook_url, secret)
+    except Exception as e:
+        print(f"[Lifespan] Webhook configuration warning: {e}")
+
+    # 3. Start background reminder daemon thread
+    try:
+        reminder_thread = threading.Thread(target=reminder_worker, daemon=True, name="ReminderWorkerThread")
+        reminder_thread.start()
+        print("[*] Фоновый поток напоминаний успешно запущен.")
+    except Exception as e:
+        print(f"[Lifespan] Reminder worker warning: {e}")
+
+    # 4. Start keep-alive loop
+    keep_alive_task = asyncio.create_task(keep_alive_loop())
+
     yield
-    task.cancel()
+
+    # Shutdown
+    keep_alive_task.cancel()
+    try:
+        close_pool()
+    except Exception:
+        pass
+    print("[*] Сервис C3 корректно остановлен.")
 
 
 async def keep_alive_loop():
@@ -191,17 +238,30 @@ async def keep_alive_loop():
         await asyncio.sleep(540)  # Ping every 9 minutes (Render free timeout is 15 minutes)
 
 
-def get_db():
-    db_url = os.getenv("DATABASE_URL")
-    if db_url:
-        try:
-            import psycopg2
-            conn = psycopg2.connect(db_url)
-            conn.set_client_encoding('UTF8')
-            return conn
-        except Exception as e:
-            print(f"[DB Server] Connect error: {e}")
-    return None
+async def api_telegram_webhook(request):
+    """
+    Direct Telegram Webhook receiver.
+    Verifies X-Telegram-Bot-Api-Secret-Token and dispatches update to background executor.
+    Returns 200 OK immediately within milliseconds.
+    """
+    expected_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "c3_artem_secure_webhook_secret_2026")
+    if expected_secret:
+        received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if received_secret != expected_secret:
+            print(f"[Webhook] Rejected unauthorized request with secret token: {received_secret[:6]}...")
+            return Response("Forbidden", status_code=403)
+
+    try:
+        update_data = await request.json()
+    except Exception as e:
+        print(f"[Webhook] Invalid JSON payload: {e}")
+        return JSONResponse({"status": "invalid_json"}, status_code=400)
+
+    # Dispatch to background thread pool executor so 200 OK is returned instantly (<20ms)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, process_telegram_update, update_data)
+
+    return JSONResponse({"ok": True})
 
 
 async def calendar_page(request):
@@ -417,6 +477,7 @@ async def api_max_digest(request):
 routes = [
     Route("/", endpoint=index),
     Route("/calendar", endpoint=calendar_page, methods=["GET"]),
+    Route("/api/telegram-webhook", endpoint=api_telegram_webhook, methods=["POST"]),
     Route("/api/health", endpoint=api_health, methods=["GET"]),
     Route("/api/tasks", endpoint=api_get_tasks, methods=["GET"]),
     Route("/api/tasks", endpoint=api_create_task, methods=["POST"]),

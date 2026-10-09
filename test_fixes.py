@@ -22,7 +22,11 @@ load_dotenv('E:/Documents/Lider/.env')
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from laya_assistant import LayaAssistantDecisionEngine
-from task_bot import to_msk, MSK, extract_task_id, db_complete_task
+from task_bot import (
+    to_msk, MSK, extract_task_id, db_complete_task,
+    extract_fallback_datetime, clean_title_fallback
+)
+from db import get_db, close_pool
 import yandex_alice
 import phone_notify
 import server
@@ -204,6 +208,74 @@ def test_sql_cast_query():
     print("  -> Passed!")
 
 
+def test_db_connection_pool():
+    print("[*] Testing Neon DB Connection Pool...")
+    from db import get_db, close_pool
+    conn1 = get_db()
+    assert conn1 is not None, "Failed to get connection from pool"
+    with conn1.cursor() as cur:
+        cur.execute("SELECT 1;")
+        res = cur.fetchone()
+        assert res[0] == 1
+    conn1.close()
+
+    # Second checkout verifies connection was returned and reused
+    conn2 = get_db()
+    assert conn2 is not None, "Failed second checkout from pool"
+    with conn2.cursor() as cur:
+        cur.execute("SELECT count(*) FROM user_tasks;")
+        count = cur.fetchone()[0]
+        assert count >= 0
+    conn2.close()
+    print("  -> Passed!")
+
+
+def test_ai_fallback_parsing():
+    print("[*] Testing AI Fallback Regex Parser & Title Cleaner...")
+    # Title cleaner
+    assert clean_title_fallback("напомни через 30 минут позвонить маме") == "Позвонить маме"
+    assert clean_title_fallback("купить хлеб через 2 часа") == "Купить хлеб"
+    assert clean_title_fallback("завтра в 15:30 созвон") == "Созвон"
+
+    # Datetime parser
+    dt1 = extract_fallback_datetime("через 15 минут")
+    assert dt1 is not None
+    now = datetime.datetime.now(MSK)
+    diff = (dt1 - now).total_seconds()
+    assert 800 < diff < 1000  # ~900s
+
+    dt2 = extract_fallback_datetime("завтра в 14:00")
+    assert dt2 is not None
+    assert dt2.hour == 14
+    assert dt2.minute == 0
+
+    print("  -> Passed!")
+
+
+def test_webhook_endpoint():
+    print("[*] Testing Telegram Webhook Security & Dispatch...")
+    class MockWebhookRequest:
+        def __init__(self, headers, body):
+            self.headers = headers
+            self._body = body
+        async def json(self):
+            return self._body
+
+    # Forbidden without correct secret token
+    import asyncio
+    req_bad = MockWebhookRequest({"X-Telegram-Bot-Api-Secret-Token": "wrong_secret"}, {"update_id": 123})
+    resp_bad = asyncio.run(server.api_telegram_webhook(req_bad))
+    assert resp_bad.status_code == 403, f"Expected 403, got {resp_bad.status_code}"
+
+    # Authorized with valid secret token
+    secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "c3_artem_secure_webhook_secret_2026")
+    req_ok = MockWebhookRequest({"X-Telegram-Bot-Api-Secret-Token": secret}, {"update_id": 999999})
+    resp_ok = asyncio.run(server.api_telegram_webhook(req_ok))
+    assert resp_ok.status_code == 200, f"Expected 200, got {resp_ok.status_code}"
+
+    print("  -> Passed!")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("RUNNING AUTOMATED TEST SUITE FOR C3 SERVICE REPO FIXES")
@@ -218,6 +290,9 @@ if __name__ == "__main__":
     test_yandex_alice_db()
     test_calendar_html_ux()
     test_sql_cast_query()
+    test_db_connection_pool()
+    test_ai_fallback_parsing()
+    test_webhook_endpoint()
     print("=" * 60)
     print("✅ ALL TESTS COMPLETED SUCCESSFULLY!")
     print("=" * 60)

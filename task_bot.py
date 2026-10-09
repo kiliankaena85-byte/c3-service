@@ -69,18 +69,22 @@ except ImportError:
 
 
 # -------------------------------------------------------------
-# Database helper (Neon PostgreSQL)
+# Database helper (Neon PostgreSQL Connection Pool)
 # -------------------------------------------------------------
-def get_db_connection():
-    try:
-        import psycopg2
-        if DATABASE_URL:
-            conn = psycopg2.connect(DATABASE_URL)
-            conn.set_client_encoding('UTF8')
-            return conn
-    except Exception as e:
-        print(f"[DB] Neon connection error: {e}")
-    return None
+try:
+    from db import get_db_connection, get_db
+except ImportError:
+    def get_db_connection():
+        try:
+            import psycopg2
+            if DATABASE_URL:
+                conn = psycopg2.connect(DATABASE_URL)
+                conn.set_client_encoding('UTF8')
+                return conn
+        except Exception as e:
+            print(f"[DB] Neon connection error: {e}")
+        return None
+    get_db = get_db_connection
 
 
 def init_db():
@@ -452,7 +456,7 @@ def parse_task_text_gemini(user_text, laya_hints=None):
             except Exception as e:
                 print(f"[AI Task] Error with {model}: {e}")
 
-    # Fallback to Laya hints when Gemini is unavailable
+    # Fallback to Laya hints & local rule-based parsing when Gemini is unavailable
     if laya_hints and laya_hints.get("laya_intent") in ["GREETING", "EMPTY"]:
         return {
             "title": None,
@@ -464,14 +468,90 @@ def parse_task_text_gemini(user_text, laya_hints=None):
         }
     cat = laya_hints.get("category", "Общее") if laya_hints else "Общее"
     prio = laya_hints.get("priority", "medium") if laya_hints else "medium"
+
+    fallback_title = clean_title_fallback(user_text) if user_text else None
+    fallback_dt = extract_fallback_datetime(user_text)
+    due_at = fallback_dt.isoformat() if fallback_dt else None
+    remind_at = (fallback_dt - datetime.timedelta(minutes=15)).isoformat() if fallback_dt else None
+
+    chosen_title = fallback_title if (fallback_title and len(fallback_title) > 2) else (user_text if (user_text and len(user_text.strip()) > 3) else None)
     return {
-        "title": user_text if (user_text and len(user_text.strip()) > 3) else None,
+        "title": chosen_title,
         "category": cat,
-        "due_at": None,
-        "remind_at": None,
+        "due_at": due_at,
+        "remind_at": remind_at,
         "priority": prio,
-        "confirmation_message": f"Задача принята: {user_text}" if user_text else "Приветствую, Артём!"
+        "confirmation_message": f"Задача принята: {chosen_title}" if chosen_title else "Приветствую, Артём!"
     }
+
+
+def extract_fallback_datetime(text: str) -> Optional[datetime.datetime]:
+    """Extracts due datetime from Russian text when Gemini is slow or unavailable."""
+    if not text:
+        return None
+    now = datetime.datetime.now(MSK)
+    t = text.lower()
+
+    # через X минут
+    m = re.search(r'через\s+(\d+)\s+мин', t)
+    if m:
+        return now + datetime.timedelta(minutes=int(m.group(1)))
+
+    # через X часов / часа / час
+    m = re.search(r'через\s+(\d+)\s+час', t)
+    if m:
+        return now + datetime.timedelta(hours=int(m.group(1)))
+    if 'через час' in t:
+        return now + datetime.timedelta(hours=1)
+
+    # через X дней / дня / день
+    m = re.search(r'через\s+(\d+)\s+дн', t)
+    if m:
+        return now + datetime.timedelta(days=int(m.group(1)))
+
+    # завтра в HH:MM
+    m = re.search(r'завтра(?:\s+в)?\s+(\d{1,2})[:.](\d{2})', t)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        return (now + datetime.timedelta(days=1)).replace(hour=h, minute=mn, second=0, microsecond=0)
+
+    # завтра (без времени -> 10:00)
+    if 'завтра' in t and not re.search(r'завтра.*в\s+\d', t):
+        return (now + datetime.timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+
+    # сегодня в HH:MM
+    m = re.search(r'сегодня(?:\s+в)?\s+(\d{1,2})[:.](\d{2})', t)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        return now.replace(hour=h, minute=mn, second=0, microsecond=0)
+
+    # в HH:MM
+    m = re.search(r'(?:^|\s)в\s+(\d{1,2})[:.](\d{2})', t)
+    if m:
+        h, mn = int(m.group(1)), int(m.group(2))
+        cand = now.replace(hour=h, minute=mn, second=0, microsecond=0)
+        if cand <= now:
+            cand += datetime.timedelta(days=1)
+        return cand
+
+    return None
+
+
+def clean_title_fallback(text: str) -> str:
+    """Strips trigger keywords and time expressions to formulate a crisp task title."""
+    if not text:
+        return ""
+    t = text.strip()
+    t = re.sub(r'^(напомни|напомнить|создай задачу|задача|поставь задачу|надо|нужно|не забыть|запиши)\s*:?\s*', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'(через\s+\d+\s+(?:минут\w*|час\w*|дн\w*))', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'(завтра(?:\s+в)?\s+\d{1,2}[:.]\d{2})', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'(сегодня(?:\s+в)?\s+\d{1,2}[:.]\d{2})', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'(?:^|\s)в\s+\d{1,2}[:.]\d{2}', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'\b(завтра|сегодня)\b', '', t, flags=re.IGNORECASE)
+    t = re.sub(r'\s+', ' ', t).strip(' ,.-')
+    if t:
+        return t[0].upper() + t[1:]
+    return text.strip()
 
 
 def extract_task_id(text: str) -> Optional[int]:
@@ -952,11 +1032,49 @@ def reminder_worker():
 
 
 # -------------------------------------------------------------
-# Main Long-Polling Loop
+# Telegram Webhook & Update Processing
+# -------------------------------------------------------------
+def process_telegram_update(upd: dict):
+    """
+    Processes a single Telegram update dict received via direct Webhook or Polling.
+    Safe wrapper preventing unhandled exceptions from crashing callers.
+    """
+    try:
+        if "message" in upd:
+            handle_message(upd["message"])
+        elif "callback_query" in upd:
+            handle_callback_query(upd["callback_query"])
+    except Exception as e:
+        print(f"[Telegram Update Processor] Error processing update {upd.get('update_id')}: {e}")
+
+
+def set_telegram_webhook(webhook_url: str, secret_token: Optional[str] = None) -> bool:
+    """Configures Telegram to deliver updates directly via Webhook to server.py."""
+    params = {
+        "url": webhook_url,
+        "allowed_updates": ["message", "callback_query"],
+        "drop_pending_updates": False
+    }
+    if secret_token:
+        params["secret_token"] = secret_token
+    res = tg_api_call("setWebhook", params)
+    print(f"[Telegram] Webhook registered at: {webhook_url} (Result: {res})")
+    return bool(res and res.get("ok"))
+
+
+def delete_telegram_webhook(drop_pending_updates: bool = False) -> bool:
+    """Deletes existing webhook for polling mode."""
+    res = tg_api_call("deleteWebhook", {"drop_pending_updates": drop_pending_updates})
+    print(f"[Telegram] Webhook deleted (Result: {res})")
+    return bool(res and res.get("ok"))
+
+
+# -------------------------------------------------------------
+# Standalone Polling Loop (Local Debugging / Standalone Fallback)
 # -------------------------------------------------------------
 def run_polling():
     print("=" * 60)
-    print("🤖 MAX & PERSONAL ASSISTANT BOT (LAYA AI + GEMINI 3.8 FLASH)")
+    print("🤖 MAX & PERSONAL ASSISTANT BOT (STANDALONE POLLING MODE)")
     print(f"Authorized User: Artem (ID {AUTHORIZED_USER_ID})")
     print(f"Target Bot: @c3_ru_bot")
     print(f"Mini App: {CALENDAR_URL}")
@@ -965,11 +1083,11 @@ def run_polling():
     init_db()
     setup_bot_interface()
 
-    # Clear any leftover webhooks
-    tg_api_call("deleteWebhook", {"drop_pending_updates": False})
+    # Clear any active webhooks before starting polling
+    delete_telegram_webhook(drop_pending_updates=False)
 
     # Start reminder daemon thread
-    reminder_thread = threading.Thread(target=reminder_worker, daemon=True)
+    reminder_thread = threading.Thread(target=reminder_worker, daemon=True, name="ReminderThread")
     reminder_thread.start()
 
     offset = None
@@ -990,11 +1108,7 @@ def run_polling():
 
             for upd in updates:
                 offset = upd["update_id"] + 1
-
-                if "message" in upd:
-                    handle_message(upd["message"])
-                elif "callback_query" in upd:
-                    handle_callback_query(upd["callback_query"])
+                process_telegram_update(upd)
 
         except Exception as e:
             time.sleep(2)
