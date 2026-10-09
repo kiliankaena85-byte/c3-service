@@ -623,7 +623,14 @@ def handle_message(msg):
         return
 
     # 5. Phone Alarm Test (Samsung Galaxy A35)
-    if text in ["/phone", "📱 Проверить телефон", "телефон", "будильник"]:
+    text_clean = text.lower().strip()
+    is_phone_cmd = (
+        text in ["/phone", "📱 Проверить телефон"]
+        or text_clean in ["телефон", "будильник", "проверить телефон", "проверка телефона", "проверь телефон", "тест телефона", "проверить будильник"]
+        or ("провер" in text_clean and "телефон" in text_clean)
+        or ("тест" in text_clean and "телефон" in text_clean)
+    )
+    if is_phone_cmd:
         try:
             from phone_notify import send_phone_alarm
             send_phone_alarm(
@@ -632,7 +639,21 @@ def handle_message(msg):
                 priority=5,
                 category="Здоровье"
             )
-            send_message(chat_id, "🚨 **Тестовый громкий будильник отправлен на Samsung Galaxy A35!**\n\nТелефон должен издать громкий сигнал, завибрировать и зажечь экран даже в беззвучном режиме.")
+            phone_kb = {
+                "inline_keyboard": [
+                    [{"text": "🚨 Повторить громкий сигнал на телефон", "callback_data": "test_phone"}]
+                ]
+            }
+            send_message(
+                chat_id,
+                "🚨 **Тестовый громкий будильник отправлен на Samsung Galaxy A35!**\n\n"
+                "Сигнал отправлен сразу в каналы `artem_spektr_tasks_2026` и `artem_spektr_task_2026`.\n\n"
+                "Телефон должен издать громкий звук будильника, завибрировать и зажечь экран даже в беззвучном режиме.\n\n"
+                "Если звука нет, проверьте в приложении `ntfy` на телефоне:\n"
+                "1. Добавлен ли канал `artem_spektr_tasks_2026`?\n"
+                "2. В настройках телефона (Приложения ➔ ntfy ➔ Батарея) выбрано ли «Не ограничено»?",
+                reply_markup=phone_kb
+            )
         except Exception as pe:
             send_message(chat_id, f"❌ Ошибка отправки на телефон: {pe}")
         return
@@ -853,6 +874,19 @@ def handle_callback_query(cq):
                 )
         except Exception as e:
             send_message(chat_id, f"❌ Ошибка проверки Алисы: {e}")
+
+    elif data == "test_phone":
+        try:
+            from phone_notify import send_phone_alarm
+            send_phone_alarm(
+                title="Повторный тест будильника",
+                message="Тестовый громкий сигнал Samsung Galaxy A35 доставлен!",
+                priority=5,
+                category="Здоровье"
+            )
+            send_message(chat_id, "🚨 **Громкий сигнал повторно отправлен на ваш телефон!**")
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка отправки: {e}")
 
 
 # -------------------------------------------------------------
