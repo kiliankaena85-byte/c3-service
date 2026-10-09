@@ -48,7 +48,7 @@ def get_yandex_token(user_id: int = 268747191) -> str:
 
 
 YANDEX_STATION_ID = os.getenv("YANDEX_STATION_ID")
-CLIENT_ID = os.getenv("YANDEX_CLIENT_ID", "23cabbbdc6cd418abb4b49c3230e3e91")
+CLIENT_ID = os.getenv("YANDEX_CLIENT_ID", "afe17649a3e94b7bb8813e8be2e6d68a")
 YANDEX_OAUTH_URL = f"https://oauth.yandex.ru/authorize?response_type=token&client_id={CLIENT_ID}"
 IOT_API_BASE = "https://api.iot.yandex.net/v1.0"
 
