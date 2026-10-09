@@ -153,13 +153,14 @@ def test_yandex_alice_db():
     print("[*] Testing Yandex Alice Neon DB Token Storage...")
     db_url = os.getenv("DATABASE_URL")
     if db_url:
-        yandex_alice.save_yandex_token("test_alice_token_neon_99")
-        loaded = yandex_alice.get_yandex_token()
+        test_uid = 999999999
+        yandex_alice.save_yandex_token("test_alice_token_neon_99", user_id=test_uid)
+        loaded = yandex_alice.get_yandex_token(user_id=test_uid)
         assert loaded == "test_alice_token_neon_99", f"Expected test_alice_token_neon_99, got {loaded}"
-        # Cleanup
+        # Cleanup test user only
         conn = yandex_alice.get_db()
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM user_settings WHERE key = 'YANDEX_OAUTH_TOKEN';")
+            cur.execute("DELETE FROM user_settings WHERE user_id = %s;", (test_uid,))
             conn.commit()
         conn.close()
     print("  -> Passed!")

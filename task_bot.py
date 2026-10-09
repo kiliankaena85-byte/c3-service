@@ -558,10 +558,19 @@ def handle_message(msg):
 
     # 3. MAX Messenger Summary
     if text in ["/max", "📊 Сводка MAX", "сводка max", "сводка"]:
-        send_message(chat_id, "⏳ **Запускаю сбор и анализ переписок MAX...**\nСейчас подключусь к web.max.ru и подготовлю выжимку.")
         try:
             from max_agent import run_max_agent
+            send_message(chat_id, "⏳ **Запускаю сбор и анализ переписок MAX...**\nСейчас подключусь к web.max.ru и подготовлю выжимку.")
             run_max_agent()
+        except (ImportError, ModuleNotFoundError):
+            send_message(
+                chat_id,
+                "📊 **Сводка мессенджера MAX**\n\n"
+                "💡 Облачный бот на Render работает 24/7 автономно для управления задачами, будильниками и календарем.\n\n"
+                "Сбор личных переписок из **web.max.ru** привязан к вашей локальной сессии Яндекс Браузера на рабочем компьютере:\n"
+                "• При включенном компьютере утренний дайджест собирается автоматически в **08:30** и отправляется сюда.\n"
+                "• Для ручного запуска на компьютере можно нажать `START_SYSTEM.bat` в папке проекта."
+            )
         except Exception as e:
             send_message(chat_id, f"❌ Ошибка запуска агента MAX: {e}")
         return
