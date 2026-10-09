@@ -14,13 +14,18 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
-# Secure private topic for Artem (uniquely salted against topic scanning)
-DEFAULT_TOPIC = "artem_spektr_tasks_a35_sec_9d4f18b"
+# Multi-topic delivery for Artem's Samsung Galaxy A35:
+# Delivers to all active device subscriptions (plural, singular, and secure)
+DEFAULT_TOPICS = [
+    "artem_spektr_tasks_2026",
+    "artem_spektr_task_2026",
+    "artem_spektr_tasks_a35_sec_9d4f18b"
+]
 env_topics = os.getenv("NTFY_TOPICS") or os.getenv("NTFY_TOPIC")
 if env_topics:
     NTFY_TOPICS = [t.strip() for t in env_topics.split(",") if t.strip()]
 else:
-    NTFY_TOPICS = [DEFAULT_TOPIC]
+    NTFY_TOPICS = DEFAULT_TOPICS
 
 NTFY_SERVER = os.getenv("NTFY_SERVER", "https://ntfy.sh")
 

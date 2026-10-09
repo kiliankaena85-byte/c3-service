@@ -145,7 +145,7 @@ def test_api_create_task_validation():
 def test_phone_notify_secure_topic():
     print("[*] Testing Phone Notify Secure Topic...")
     assert "artem_spektr_tasks_a35_sec_9d4f18b" in phone_notify.NTFY_TOPICS
-    assert "artem_spektr_task_2026" not in phone_notify.NTFY_TOPICS
+    assert "artem_spektr_tasks_2026" in phone_notify.NTFY_TOPICS
     print("  -> Passed!")
 
 
