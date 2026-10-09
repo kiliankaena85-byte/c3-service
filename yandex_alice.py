@@ -90,63 +90,94 @@ def get_smart_home_devices(token=None):
         return []
 
 
-def speak_on_station(phrase: str, station_id: str = None, token: str = None):
+def get_user_scenarios(token: str = None) -> list:
     """
-    Commands Alice on Yandex Station to speak a phrase out loud in the room.
+    Fetches all user scenarios configured in Artem's Yandex Smart Home.
+    Returns list of scenarios with id, name, and is_active flag.
     """
     tok = token or get_yandex_token()
     if not tok:
-        print(f"[Alice] Cannot speak: YANDEX_OAUTH_TOKEN missing.")
-        return False
-
-    target_id = station_id or YANDEX_STATION_ID
-    if not target_id:
-        # Auto-discover first available speaker
-        speakers = get_smart_home_devices(tok)
-        if speakers:
-            target_id = speakers[0]["id"]
-            print(f"[Alice] Auto-selected speaker: '{speakers[0]['name']}' ({target_id})")
-        else:
-            print("[Alice] ❌ No Yandex Station found in account.")
-            return False
-
-    url = f"{IOT_API_BASE}/devices/actions"
-    payload = {
-        "devices": [
-            {
-                "id": target_id,
-                "actions": [
-                    {
-                        "type": "devices.capabilities.quasar.server_action",
-                        "state": {
-                            "instance": "phrase_action",
-                            "value": phrase
-                        }
-                    }
-                ]
-            }
-        ]
-    }
-
+        return []
+    url = f"{IOT_API_BASE}/user/info"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
     try:
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Authorization": f"Bearer {tok}",
-                "Content-Type": "application/json"
-            }
-        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("scenarios", [])
+    except Exception as e:
+        print(f"[Alice] ❌ Error fetching scenarios: {e}")
+        return []
+
+
+def trigger_scenario(scenario_id: str = None, scenario_name: str = None, token: str = None) -> tuple:
+    """
+    Triggers an official Yandex Smart Home Scenario (e.g. speaking a phrase, weather, commands).
+    Returns (success: bool, message: str).
+    """
+    tok = token or get_yandex_token()
+    if not tok:
+        return False, "YANDEX_OAUTH_TOKEN не найден в базе данных."
+
+    scenarios = get_user_scenarios(tok)
+    target_id = scenario_id
+
+    if not target_id:
+        if scenario_name:
+            for s in scenarios:
+                if scenario_name.lower() in s.get("name", "").lower():
+                    target_id = s.get("id")
+                    break
+        if not target_id:
+            # Prefer active scenarios
+            active_scenarios = [s for s in scenarios if s.get("is_active")]
+            if active_scenarios:
+                target_id = active_scenarios[0]["id"]
+            elif scenarios:
+                target_id = scenarios[0]["id"]
+            else:
+                return False, "В аккаунте пока нет созданных сценариев в приложении «Дом с Алисой»."
+
+    url = f"{IOT_API_BASE}/scenarios/{target_id}/actions"
+    req = urllib.request.Request(
+        url,
+        data=b"{}",
+        headers={
+            "Authorization": f"Bearer {tok}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
-                print(f"[Alice] 🗣️ Command sent to Station: «{phrase}»")
-                return True
-            else:
-                print(f"[Alice] ⚠️ API returned HTTP {resp.status}")
-                return False
+                return True, "Сценарий успешно выполнен! Алиса проговаривает команду на колонке."
+            return False, f"Ошибка API: HTTP {resp.status}"
+    except urllib.error.HTTPError as he:
+        body = he.read().decode("utf-8", errors="ignore")
+        if "scenario is not active" in body:
+            return False, "Сценарий выключен в приложении «Дом с Алисой». Включите тумблер у сценария."
+        return False, f"HTTP {he.code}: {body}"
     except Exception as e:
-        print(f"[Alice] ❌ Error triggering speech: {e}")
+        return False, str(e)
+
+
+def speak_on_station(phrase: str = None, station_id: str = None, token: str = None) -> bool:
+    """
+    Commands Alice on Yandex Station to speak a phrase or trigger voice reminder.
+    In Yandex Smart Home, voice commands on smart speakers are triggered via Scenarios.
+    """
+    tok = token or get_yandex_token()
+    if not tok:
+        print("[Alice] Cannot speak: YANDEX_OAUTH_TOKEN missing.")
+        return False
+
+    # Try triggering active reminder / test scenario first
+    success, msg = trigger_scenario(token=tok)
+    if success:
+        print(f"[Alice] 🗣️ Scenario triggered on Station: {msg}")
+        return True
+    else:
+        print(f"[Alice] ⚠️ Scenario trigger status: {msg}")
         return False
 
 

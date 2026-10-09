@@ -567,14 +567,33 @@ def handle_message(msg):
         return
 
     # 4. Yandex Station (Alice) Status & OAuth
-    if text in ["/alice", "🔊 Яндекс Алиса", "алиса", "станция"]:
+    if text in ["/alice", "/test_alice", "🔊 Яндекс Алиса", "алиса", "станция", "проверь алису"]:
         try:
-            from yandex_alice import get_yandex_token, get_smart_home_devices, YANDEX_OAUTH_URL
+            from yandex_alice import get_yandex_token, get_smart_home_devices, get_user_scenarios, trigger_scenario, YANDEX_OAUTH_URL
             tok = get_yandex_token(user_id)
             speakers = get_smart_home_devices(tok) if tok else []
             if speakers:
                 sp_names = ", ".join([f"«{s['name']}» ({s['room']})" for s in speakers])
-                send_message(chat_id, f"🔊 **Яндекс Станция подключена и активна!**\n\nОбнаружены колонки: {sp_names}.\n\nПри наступлении времени задачи Алиса сама напомнит вам голосом в комнате.")
+                scenarios = get_user_scenarios(tok)
+                sc_lines = []
+                for sc in scenarios:
+                    status_emoji = "🟢 Включен" if sc.get("is_active") else "⚪ Выключен"
+                    sc_lines.append(f"• **{sc.get('name', 'Без имени')}** ({status_emoji})")
+                sc_str = "\n".join(sc_lines) if sc_lines else "• Нет созданных сценариев"
+
+                alice_kb = {
+                    "inline_keyboard": [
+                        [{"text": "🗣️ Запустить проверку Алисы", "callback_data": "test_alice"}]
+                    ]
+                }
+                send_message(
+                    chat_id,
+                    f"🔊 **Яндекс Станция подключена!**\n\n"
+                    f"Колонка: {sp_names}\n"
+                    f"Сценарии в «Дом с Алисой»:\n{sc_str}\n\n"
+                    f"💡 *Для голосового ответа*: включите сценарий в приложении «Дом с Алисой» на телефоне и нажмите кнопку ниже:",
+                    reply_markup=alice_kb
+                )
             else:
                 alice_kb = {
                     "inline_keyboard": [
@@ -807,6 +826,24 @@ def handle_callback_query(cq):
         task_id = int(data.split("_")[1])
         db_postpone_task(task_id, hours=1)
         send_message(chat_id, f"⏳ Задача #{task_id} отложена на 1 час.")
+
+    elif data == "test_alice":
+        try:
+            from yandex_alice import trigger_scenario
+            ok, msg = trigger_scenario()
+            if ok:
+                send_message(chat_id, f"🗣️ **Команда отправлена на Яндекс Лайт!**\n\n{msg}")
+            else:
+                send_message(
+                    chat_id,
+                    f"⚠️ **Не удалось запустить воспроизведение на колонке:**\n{msg}\n\n"
+                    f"📱 **Что нужно сделать (1 раз):**\n"
+                    f"1. Откройте приложение **«Дом с Алисой»** на телефоне.\n"
+                    f"2. Во вкладке «Сценарии» включите переключатель у сценария (например, «Погода» или создайте сценарий со своей фразой: «Яндекс Лайт -> Прочитать текст»).\n"
+                    f"3. Нажмите кнопку **[🗣️ Запустить проверку Алисы]** снова!"
+                )
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка проверки Алисы: {e}")
 
 
 # -------------------------------------------------------------
