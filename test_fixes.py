@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from laya_assistant import LayaAssistantDecisionEngine
 from task_bot import (
     to_msk, MSK, extract_task_id, db_complete_task,
-    extract_fallback_datetime, clean_title_fallback
+    extract_fallback_datetime, clean_title_fallback,
+    db_start_focus_session, db_get_active_focus_session, db_cancel_focus_session,
+    db_get_mit_tasks, db_set_task_mit, db_get_active_tasks, db_postpone_task_minutes
 )
 from db import get_db, close_pool
 import yandex_alice
@@ -276,6 +278,45 @@ def test_webhook_endpoint():
     print("  -> Passed!")
 
 
+def test_time_management_suite():
+    print("[*] Testing Time Management & Self-Systematization Suite...")
+    # 1. Intent routing
+    for phrase in ["фокус 45 минут", "помодоро", "глубокий фокус", "спринт 25 минут"]:
+        t = LayaAssistantDecisionEngine.evaluate_intent_and_routing(phrase)
+        assert t["laya_intent"] == "FOCUS_SESSION", f"Failed for '{phrase}': got {t['laya_intent']}"
+
+    for phrase in ["утренний фокус", "3 главных дела", "3 цели", "mit"]:
+        t = LayaAssistantDecisionEngine.evaluate_intent_and_routing(phrase)
+        assert t["laya_intent"] == "MORNING_MIT", f"Failed for '{phrase}': got {t['laya_intent']}"
+
+    for phrase in ["итоги дня", "вечерний обзор", "итоги", "дебрифинг"]:
+        t = LayaAssistantDecisionEngine.evaluate_intent_and_routing(phrase)
+        assert t["laya_intent"] == "EVENING_REVIEW", f"Failed for '{phrase}': got {t['laya_intent']}"
+
+    # 2. Focus Session DB cycle
+    res = db_start_focus_session(268747191, "Тестовый спринт", 25)
+    assert res is not None, "Failed to start focus session"
+    active = db_get_active_focus_session(268747191)
+    assert active is not None, "Failed to retrieve active focus session"
+    assert active["task_title"] == "Тестовый спринт"
+    assert active["duration_minutes"] == 25
+    cancelled = db_cancel_focus_session(268747191)
+    assert cancelled is True, "Failed to cancel focus session"
+    assert db_get_active_focus_session(268747191) is None, "Focus session should be None after cancellation"
+
+    # 3. MIT task flagging
+    tasks = db_get_active_tasks(268747191)
+    if tasks:
+        tid = tasks[0]["id"]
+        assert db_set_task_mit(tid, True) is True
+        mits = db_get_mit_tasks(268747191)
+        assert any(m[0] == tid for m in mits), "Task should be in MIT list"
+        # Reset
+        db_set_task_mit(tid, False)
+
+    print("  -> Passed!")
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("RUNNING AUTOMATED TEST SUITE FOR C3 SERVICE REPO FIXES")
@@ -293,6 +334,7 @@ if __name__ == "__main__":
     test_db_connection_pool()
     test_ai_fallback_parsing()
     test_webhook_endpoint()
+    test_time_management_suite()
     print("=" * 60)
     print("✅ ALL TESTS COMPLETED SUCCESSFULLY!")
     print("=" * 60)

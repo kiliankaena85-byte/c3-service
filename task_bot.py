@@ -108,6 +108,9 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 );
+                ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS is_mit BOOLEAN DEFAULT FALSE;
+                ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS checkin_sent BOOLEAN DEFAULT FALSE;
+
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id BIGINT NOT NULL DEFAULT 268747191,
                     key VARCHAR(128) NOT NULL,
@@ -115,10 +118,22 @@ def init_db():
                     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     PRIMARY KEY (user_id, key)
                 );
+
+                CREATE TABLE IF NOT EXISTS focus_sessions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL DEFAULT 268747191,
+                    task_title TEXT NOT NULL,
+                    duration_minutes INT NOT NULL,
+                    started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    ends_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    status VARCHAR(32) DEFAULT 'active',
+                    alert_sent BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                );
             """)
             conn.commit()
         conn.close()
-        print("[DB] Initialized Neon PostgreSQL user_tasks and user_settings tables.")
+        print("[DB] Initialized Neon PostgreSQL user_tasks, user_settings, and focus_sessions tables.")
 
 
 def db_create_task(user_id, title, raw_input, category, due_at, remind_at, priority="medium", source="telegram_text", channels=None):
@@ -240,21 +255,302 @@ def db_mark_reminder_sent(task_id):
         conn.close()
 
 
+def db_start_focus_session(user_id: int, task_title: str, duration_minutes: int = 45):
+    """Starts a Deep Work Focus Session for Artem."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE focus_sessions 
+                SET status = 'cancelled' 
+                WHERE user_id = %s AND status = 'active';
+            """, (user_id,))
+            
+            cur.execute("""
+                INSERT INTO focus_sessions (user_id, task_title, duration_minutes, ends_at)
+                VALUES (%s, %s, %s, NOW() + INTERVAL '%s minutes')
+                RETURNING id, ends_at;
+            """, (user_id, task_title, duration_minutes, duration_minutes))
+            row = cur.fetchone()
+            conn.commit()
+            return {"id": row[0], "ends_at": row[1]}
+    except Exception as e:
+        print(f"[DB Focus] Error starting session: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def db_get_active_focus_session(user_id: int):
+    """Retrieves current active focus session if any."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, task_title, duration_minutes, started_at, ends_at 
+                FROM focus_sessions
+                WHERE user_id = %s AND status = 'active' AND ends_at > NOW()
+                ORDER BY id DESC LIMIT 1;
+            """, (user_id,))
+            row = cur.fetchone()
+            if row:
+                return {
+                    "id": row[0],
+                    "task_title": row[1],
+                    "duration_minutes": row[2],
+                    "started_at": row[3],
+                    "ends_at": row[4]
+                }
+            return None
+    finally:
+        conn.close()
+
+
+def db_cancel_focus_session(user_id: int):
+    """Cancels active focus session."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE focus_sessions 
+                SET status = 'cancelled' 
+                WHERE user_id = %s AND status = 'active';
+            """, (user_id,))
+            updated = cur.rowcount > 0
+            conn.commit()
+            return updated
+    finally:
+        conn.close()
+
+
+def db_get_expired_focus_sessions():
+    """Finds focus sessions that reached completion and need celebration/alarm."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, user_id, task_title, duration_minutes, ends_at
+                FROM focus_sessions
+                WHERE status = 'active' AND alert_sent = FALSE AND ends_at <= NOW();
+            """)
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB Focus] Error checking expired: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def db_mark_focus_alert_sent(session_id: int):
+    """Marks focus session as finished and alert delivered."""
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE focus_sessions 
+                SET status = 'completed', alert_sent = TRUE 
+                WHERE id = %s;
+            """, (session_id,))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def db_get_tasks_needing_checkin():
+    """Finds overdue tasks that have not yet had an accountability check-in."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, user_id, title, category, due_at
+                FROM user_tasks
+                WHERE status = 'pending'
+                  AND checkin_sent = FALSE
+                  AND due_at IS NOT NULL
+                  AND due_at <= NOW() - INTERVAL '25 minutes';
+            """)
+            return cur.fetchall()
+    except Exception as e:
+        print(f"[DB Checkin] Error fetching: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def db_mark_task_checkin_sent(task_id: int):
+    """Marks accountability check-in as sent for this task."""
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE user_tasks SET checkin_sent = TRUE WHERE id = %s;", (task_id,))
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def db_postpone_task_minutes(task_id: int, minutes: int = 30):
+    """Postpones a task by N minutes and resets checkin_sent flag."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_tasks 
+                SET due_at = NOW() + INTERVAL '%s minutes',
+                    remind_at = NOW() + INTERVAL '%s minutes' - INTERVAL '10 minutes',
+                    reminder_sent = FALSE,
+                    checkin_sent = FALSE,
+                    updated_at = NOW()
+                WHERE id = %s;
+            """, (minutes, minutes, task_id))
+            conn.commit()
+            return True
+    finally:
+        conn.close()
+
+
+def db_postpone_task_to_evening(task_id: int):
+    """Postpones task to today evening (19:00 MSK)."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        now_msk = datetime.datetime.now(MSK)
+        evening_msk = now_msk.replace(hour=19, minute=0, second=0, microsecond=0)
+        if evening_msk <= now_msk:
+            evening_msk = (now_msk + datetime.timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE user_tasks 
+                SET due_at = %s,
+                    remind_at = %s - INTERVAL '15 minutes',
+                    reminder_sent = FALSE,
+                    checkin_sent = FALSE,
+                    updated_at = NOW()
+                WHERE id = %s;
+            """, (evening_msk, evening_msk, task_id))
+            conn.commit()
+            return True
+    finally:
+        conn.close()
+
+
+def db_get_mit_tasks(user_id: int):
+    """Retrieves tasks flagged as Most Important Tasks (MIT) for today."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, category, due_at, priority
+                FROM user_tasks
+                WHERE user_id = %s AND status = 'pending' AND is_mit = TRUE
+                ORDER BY due_at ASC NULLS LAST, id DESC
+                LIMIT 3;
+            """, (user_id,))
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def db_set_task_mit(task_id: int, is_mit: bool = True):
+    """Flags or unflags a task as MIT."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE user_tasks SET is_mit = %s, updated_at = NOW() WHERE id = %s;", (is_mit, task_id))
+            conn.commit()
+            return True
+    finally:
+        conn.close()
+
+
+def db_get_completed_today_tasks(user_id: int):
+    """Retrieves tasks completed today for the evening review."""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, title, category, updated_at
+                FROM user_tasks
+                WHERE user_id = %s AND status = 'completed' AND updated_at >= CURRENT_DATE
+                ORDER BY updated_at DESC;
+            """, (user_id,))
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def db_get_user_setting(user_id: int, key: str) -> Optional[str]:
+    conn = get_db_connection()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT value FROM user_settings WHERE user_id = %s AND key = %s;", (user_id, key))
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def db_set_user_setting(user_id: int, key: str, value: str):
+    conn = get_db_connection()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_settings (user_id, key, value, updated_at)
+                VALUES (%s, %s, %s, NOW())
+                ON CONFLICT (user_id, key) DO UPDATE 
+                SET value = EXCLUDED.value, updated_at = NOW();
+            """, (user_id, key, value))
+            conn.commit()
+    finally:
+        conn.close()
+
+
 # -------------------------------------------------------------
 # Telegram UI & Keyboards
 # -------------------------------------------------------------
 def get_main_reply_keyboard():
     """
     Persistent 1-touch Reply Keyboard.
-    No need to remember or type any commands.
+    Ergonomic executive layout with immediate time-management controls.
     """
     return {
         "keyboard": [
             [
-                {"text": "📅 Открыть Календарь задач", "web_app": {"url": CALENDAR_URL}}
+                {"text": "📅 Открыть Календарь", "web_app": {"url": CALENDAR_URL}},
+                {"text": "📋 Мои задачи"}
             ],
             [
-                {"text": "📋 Мои задачи"},
+                {"text": "🎯 Режим фокуса (45м)"},
+                {"text": "🌅 3 Главных дела (MIT)"}
+            ],
+            [
+                {"text": "🌙 Итоги дня"},
                 {"text": "📊 Сводка MAX"}
             ],
             [
@@ -574,6 +870,187 @@ def extract_task_id(text: str) -> Optional[int]:
     return None
 
 
+def handle_focus_command(chat_id, user_id, text=""):
+    """
+    Pillar 2: Deep Work Focus Session (Pomodoro / Smart Timer).
+    """
+    active = db_get_active_focus_session(user_id)
+    if active:
+        ends_msk = to_msk(active["ends_at"])
+        now_msk = datetime.datetime.now(MSK)
+        rem_mins = max(1, int((ends_msk - now_msk).total_seconds() // 60))
+        send_message(
+            chat_id,
+            f"🎯 **У вас уже активен фокус-режим!**\n\n"
+            f"📌 **Задача:** «{active['task_title']}»\n"
+            f"⏳ **Осталось:** ~{rem_mins} мин (до {ends_msk.strftime('%H:%M МСК')})\n\n"
+            f"📵 Сохраняйте концентрацию. По окончании телефон громко просигнализирует!",
+            reply_markup={
+                "inline_keyboard": [
+                    [{"text": "⏹ Прервать фокус", "callback_data": "focus_cancel"}],
+                    [{"text": "✅ Задача выполнена", "callback_data": "focus_cancel"}]
+                ]
+            }
+        )
+        return
+
+    # Check if text contains custom duration or specific task title
+    clean = text.lower().strip()
+    m_dur = re.search(r'(\d+)\s*(?:мин|m|минут)', clean)
+    duration = int(m_dur.group(1)) if m_dur else 45
+
+    # Extract target task name if provided
+    clean_task = re.sub(r'^(?:/focus|фокус|помодоро|глубокий\s+фокус|спринт)\s*', '', text, flags=re.IGNORECASE).strip()
+    clean_task = re.sub(r'(?:на\s+)?\d+\s*(?:мин\w*|минут\w*)\s*', '', clean_task, flags=re.IGNORECASE).strip()
+    clean_task = re.sub(r'^на\s+', '', clean_task, flags=re.IGNORECASE).strip()
+
+    if clean_task and len(clean_task) > 2:
+        res = db_start_focus_session(user_id, clean_task, duration)
+        if res:
+            ends_msk = to_msk(res["ends_at"])
+            send_message(
+                chat_id,
+                f"🎯 **РЕЖИМ ГЛУБОКОГО ФОКУСА ВКЛЮЧЕН!**\n\n"
+                f"📌 **Задача:** «{clean_task}»\n"
+                f"⏳ **Таймер:** {duration} минут (до {ends_msk.strftime('%H:%M МСК')})\n\n"
+                f"📵 **Правило чистой концентрации:**\n"
+                f"1. Закройте все лишние вкладки и мессенджеры.\n"
+                f"2. Положите телефон экраном вниз.\n"
+                f"3. Работайте ТОЛЬКО над этой задачей.\n\n"
+                f"По окончании раздастся громкий сигнал на телефоне!",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "⏹ Прервать фокус", "callback_data": "focus_cancel"}]
+                    ]
+                }
+            )
+            return
+
+    # Interactive duration chooser
+    send_message(
+        chat_id,
+        "🎯 **РЕЖИМ ГЛУБОКОГО ФОКУСА (DEEP WORK)**\n\n"
+        "Выберите длительность спринта непрерывной работы:\n"
+        "• **25 минут (Спринт):** быстрый старт для преодоления прокрастинации\n"
+        "• **45 минут (Глубокая работа):** стандарт максимальной продуктивности\n"
+        "• **60 минут (Погружение):** для сложных аналитических расчетов\n\n"
+        "💡 *По окончании таймера телефон издаст громкий сигнал даже в беззвучном режиме.*",
+        reply_markup={
+            "inline_keyboard": [
+                [{"text": "⏱ 25 минут (Спринт)", "callback_data": "focus_start_25"}],
+                [{"text": "⏱ 45 минут (Стандарт)", "callback_data": "focus_start_45"}],
+                [{"text": "⏱ 60 минут (Погружение)", "callback_data": "focus_start_60"}]
+            ]
+        }
+    )
+
+
+def handle_morning_mit_command(chat_id, user_id):
+    """
+    Pillar 1: Morning Briefing & 3 Most Important Tasks (MIT).
+    """
+    mit_tasks = db_get_mit_tasks(user_id)
+    all_active = db_get_active_tasks(user_id)
+
+    if mit_tasks:
+        lines = ["🌅 **ВАШИ 3 ГЛАВНЫЕ ЦЕЛИ НА СЕГОДНЯ (MIT):**\n", "«Сделайте эти 3 дела — и день станет победным».\n"]
+        buttons = []
+        for i, t in enumerate(mit_tasks, 1):
+            tid, title, cat, due_at, prio = t
+            due_msk = to_msk(due_at)
+            due_str = due_msk.strftime('%H:%M') if due_msk else "сегодня"
+            lines.append(f"**{i}. ⭐️ #{tid} {title}**\n   📂 *{cat}* | ⏰ {due_str}")
+            buttons.append([{"text": f"🎯 Фокус на цель #{i}", "callback_data": f"mit_focus_{tid}"}])
+
+        buttons.append([{"text": "📅 Открыть Календарь", "web_app": {"url": CALENDAR_URL}}])
+        send_message(chat_id, "\n".join(lines), reply_markup={"inline_keyboard": buttons})
+        return
+
+    if all_active:
+        lines = [
+            "🌅 **УТРЕННИЙ ФОКУС: ВЫБЕРИТЕ 3 ГЛАВНЫХ ДЕЛА (MIT)**\n",
+            "Чтобы не распыляться на десятки мелких дел, выберите **до 3 ключевых задач**, которые дадут максимальный результат сегодня:\n"
+        ]
+        buttons = []
+        for t in all_active[:6]:
+            tid = t["id"]
+            title = t["title"]
+            lines.append(f"• **#{tid} {title}**")
+            buttons.append([{"text": f"⭐️ Выбрать #{tid} {title[:25]}", "callback_data": f"mit_select_{tid}"}])
+
+        send_message(chat_id, "\n".join(lines), reply_markup={"inline_keyboard": buttons})
+        return
+
+    send_message(
+        chat_id,
+        "🌅 **Доброе утро, Артём!**\n\n"
+        "На сегодня в списке пока нет активных задач.\n"
+        "Надиктуйте голосом или напишите 1–3 главные цели на день — я сразу зафиксирую их в расписании!",
+        reply_markup=get_main_reply_keyboard()
+    )
+
+
+def handle_evening_review_command(chat_id, user_id):
+    """
+    Pillar 4: Evening Debriefing & Brain Dump.
+    """
+    completed_today = db_get_completed_today_tasks(user_id)
+    active_tasks = db_get_active_tasks(user_id)
+
+    if completed_today:
+        c_lines = [f"🎉 **СЕГОДНЯ ВЫПОЛНЕНО ({len(completed_today)} задач):**"]
+        for ct in completed_today:
+            cid, ctitle, ccat, cupd = ct
+            c_lines.append(f"  ✅ **{ctitle}** [{ccat}]")
+        completed_str = "\n".join(c_lines) + "\n\n"
+    else:
+        completed_str = "Сегодня закрытых задач не зафиксировано.\n\n"
+
+    pending_count = len(active_tasks)
+    pending_str = f"⏳ В списке ожидания: {pending_count} задач.\n\n" if pending_count > 0 else "✅ Все текущие дела закрыты!\n\n"
+
+    brain_dump_prompt = (
+        "🧠 **ВЕЧЕРНЯЯ РАЗГРУЗКА ГОЛОВЫ (Brain Dump)**\n"
+        "Не держите мысли и планы в голове на ночь — это мешает качественному сну.\n\n"
+        "Надиктуйте всё, что нужно сделать завтра или на неделе, **одним голосовым сообщением**:\n"
+        "• Встречи, звонки, дела по C3\n"
+        "• Бытовые задачи и покупки\n\n"
+        "Я разложу всё по времени и категориям. Вы сможете спокойно отдохнуть!"
+    )
+
+    full_text = (
+        "🌙 **ИТОГИ ДНЯ И ВЕЧЕРНЯЯ РАЗГРУЗКА**\n\n"
+        f"{completed_str}"
+        f"{pending_str}"
+        f"{brain_dump_prompt}"
+    )
+
+    send_message(
+        chat_id,
+        full_text,
+        reply_markup={
+            "inline_keyboard": [
+                [{"text": "📅 Открыть Календарь на завтра", "web_app": {"url": CALENDAR_URL}}]
+            ]
+        }
+    )
+
+
+def send_morning_briefing(user_id, chat_id):
+    """Dispatches 09:00 Morning MIT briefing and Alice speaker prompt."""
+    handle_morning_mit_command(chat_id, user_id)
+    try:
+        from yandex_alice import trigger_scenario
+        trigger_scenario()
+    except Exception as e:
+        print(f"[Morning Briefing] Alice trigger error: {e}")
+
+
+def send_evening_review(user_id, chat_id):
+    """Dispatches 21:00 Evening review."""
+    handle_evening_review_command(chat_id, user_id)
+
+
 # -------------------------------------------------------------
 # Telegram Message Processor
 # -------------------------------------------------------------
@@ -756,6 +1233,25 @@ def handle_message(msg):
                 send_message(chat_id, f"❌ Ошибка сохранения токена: {te}")
             return
 
+    # 7. Deep Work Focus Command / Button
+    if (
+        text in ["/focus", "🎯 Режим фокуса (45м)", "фокус", "помодоро", "спринт", "глубокий фокус"]
+        or text.startswith("/focus")
+        or (text.lower().startswith("фокус") and not any(w in text.lower() for w in ["утренний", "дня"]))
+    ):
+        handle_focus_command(chat_id, user_id, text)
+        return
+
+    # 8. Morning MIT Command / Button
+    if text in ["/morning", "/mit", "🌅 3 Главных дела (MIT)", "утренний фокус", "3 главных дела", "главные дела", "3 цели"]:
+        handle_morning_mit_command(chat_id, user_id)
+        return
+
+    # 9. Evening Review Command / Button
+    if text in ["/evening", "/review", "🌙 Итоги дня", "итоги дня", "итоги", "дебрифинг"]:
+        handle_evening_review_command(chat_id, user_id)
+        return
+
     raw_input_text = text
 
     # Step 1: Voice transcription (Gemini 3.8 Flash Speech-to-Text)
@@ -779,6 +1275,18 @@ def handle_message(msg):
     print(f"[LAYA Decision] Intent: {laya['laya_intent']} | Urgency: {laya['urgency_score']}/5 | Channels: {laya['target_channels']} ({laya['laya_latency_ms']}ms)")
 
     # Fast routing based on Laya intent
+    if laya["laya_intent"] == "FOCUS_SESSION":
+        handle_focus_command(chat_id, user_id, raw_input_text)
+        return
+
+    if laya["laya_intent"] == "MORNING_MIT":
+        handle_morning_mit_command(chat_id, user_id)
+        return
+
+    if laya["laya_intent"] == "EVENING_REVIEW":
+        handle_evening_review_command(chat_id, user_id)
+        return
+
     if laya["laya_intent"] == "GREETING":
         clean_lower = raw_input_text.lower()
         if any(w in clean_lower for w in ["спасибо", "благодарю"]):
@@ -937,6 +1445,68 @@ def handle_callback_query(cq):
         db_postpone_task(task_id, hours=1)
         send_message(chat_id, f"⏳ Задача #{task_id} отложена на 1 час.")
 
+    elif data.startswith("focus_start_"):
+        mins = int(data.split("_")[2])
+        res = db_start_focus_session(user_id, "Глубокая концентрация", mins)
+        if res:
+            ends_msk = to_msk(res["ends_at"])
+            send_message(
+                chat_id,
+                f"🎯 **РЕЖИМ ГЛУБОКОГО ФОКУСА ВКЛЮЧЕН!**\n\n"
+                f"📌 **Цель:** Глубокая концентрация\n"
+                f"⏳ **Таймер:** {mins} минут (до {ends_msk.strftime('%H:%M МСК')})\n\n"
+                f"📵 Положите телефон экраном вниз. По окончании таймера прозвучит громкий сигнал!",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "⏹ Прервать фокус", "callback_data": "focus_cancel"}]
+                    ]
+                }
+            )
+
+    elif data == "focus_cancel":
+        db_cancel_focus_session(user_id)
+        send_message(chat_id, "⏹ **Фокус-сессия остановлена.** Возвращайтесь к работе, когда будете готовы!")
+
+    elif data.startswith("checkin_done_"):
+        task_id = int(data.split("_")[2])
+        db_complete_task(task_id)
+        send_message(chat_id, f"🎉 **Отлично!** Задача #{task_id} выполнена и закрыта.")
+
+    elif data.startswith("checkin_postpone_"):
+        parts = data.split("_")
+        task_id = int(parts[2])
+        mode = parts[3]
+        if mode == "30":
+            db_postpone_task_minutes(task_id, 30)
+            send_message(chat_id, f"⏳ Задача #{task_id} продлена на 30 минут.")
+        elif mode == "evening":
+            db_postpone_task_to_evening(task_id)
+            send_message(chat_id, f"🌙 Задача #{task_id} перенесена на вечер (19:00 МСК).")
+
+    elif data.startswith("mit_select_"):
+        task_id = int(data.split("_")[2])
+        db_set_task_mit(task_id, True)
+        send_message(chat_id, f"⭐️ **Задача #{task_id} закреплена как одна из 3 Главных целей дня (MIT)!**")
+        handle_morning_mit_command(chat_id, user_id)
+
+    elif data.startswith("mit_focus_"):
+        task_id = int(data.split("_")[2])
+        tasks = db_get_active_tasks(user_id)
+        t_title = next((t["title"] for t in tasks if t["id"] == task_id), f"Задача #{task_id}")
+        res = db_start_focus_session(user_id, t_title, 45)
+        if res:
+            ends_msk = to_msk(res["ends_at"])
+            send_message(
+                chat_id,
+                f"🎯 **Фокус 45 минут запущен по главной цели #{task_id}:**\n«{t_title}»\n\n"
+                f"⏳ До {ends_msk.strftime('%H:%M МСК')}. Работаем только над ней!",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "⏹ Прервать фокус", "callback_data": "focus_cancel"}]
+                    ]
+                }
+            )
+
     elif data == "test_alice":
         try:
             from yandex_alice import trigger_scenario
@@ -970,13 +1540,14 @@ def handle_callback_query(cq):
 
 
 # -------------------------------------------------------------
-# Background Reminder Loop
+# Background Reminder & Habit Loop
 # -------------------------------------------------------------
 def reminder_worker():
-    """Continuously checks for due reminders and fires notifications."""
-    print("[Reminder Worker] Started monitoring scheduled tasks...")
+    """Continuously checks for due reminders, expired focus timers, and scheduled coaching."""
+    print("[Reminder Worker] Started monitoring scheduled tasks, focus sessions, and check-ins...")
     while True:
         try:
+            # 1. Standard Due Task Reminders
             due_tasks = db_get_due_reminders()
             for t in due_tasks:
                 task_id, user_id, title, category, due_at, target_channels = t
@@ -1025,6 +1596,96 @@ def reminder_worker():
                         print(f"[Reminder Worker] Alice TTS error: {ae}")
 
                 db_mark_reminder_sent(task_id)
+
+            # 2. Expired Deep Work Focus Sessions
+            try:
+                expired_sessions = db_get_expired_focus_sessions()
+                for s in expired_sessions:
+                    sid, uid, s_title, s_dur, s_ends = s
+                    print(f"[Reminder Worker] Focus session #{sid} expired: '{s_title}'")
+                    db_mark_focus_alert_sent(sid)
+
+                    try:
+                        from phone_notify import send_phone_alarm
+                        send_phone_alarm(
+                            title="🎯 Фокус завершен!",
+                            message=f"{s_dur} минут работы над «{s_title}» окончены. Время сделать перерыв 10 минут!",
+                            priority=5,
+                            category="Здоровье"
+                        )
+                    except Exception as fe:
+                        print(f"[Focus Alert] Phone alarm error: {fe}")
+
+                    focus_end_kb = {
+                        "inline_keyboard": [
+                            [{"text": "☕ Перерыв 10 мин", "callback_data": "focus_start_10"}, {"text": "🎯 Еще фокус (45м)", "callback_data": "focus_start_45"}]
+                        ]
+                    }
+                    send_message(
+                        uid,
+                        f"🎉 **ВРЕМЯ ВЫШЛО! СЕССИЯ ГЛУБОКОГО ФОКУСА ЗАВЕРШЕНА!**\n\n"
+                        f"Вы отлично поработали {s_dur} минут над целью:\n"
+                        f"📌 **«{s_title}»**\n\n"
+                        f"☕ **Правило отдыха:** обязательно встаньте из-за стола, разомнитесь, выпейте воды и дайте глазам 5–10 минут отдыха!",
+                        reply_markup=focus_end_kb
+                    )
+            except Exception as fe:
+                print(f"[Reminder Worker] Focus check error: {fe}")
+
+            # 3. Proactive Accountability Check-in
+            try:
+                checkin_tasks = db_get_tasks_needing_checkin()
+                for ct in checkin_tasks:
+                    cid, cuid, ctitle, ccat, cdue = ct
+                    due_msk = to_msk(cdue)
+                    due_str = due_msk.strftime('%H:%M') if due_msk else "ранее"
+                    print(f"[Reminder Worker] Sending proactive check-in for Task #{cid}: '{ctitle}'")
+                    db_mark_task_checkin_sent(cid)
+
+                    checkin_kb = {
+                        "inline_keyboard": [
+                            [{"text": "✅ Выполнено!", "callback_data": f"checkin_done_{cid}"}],
+                            [{"text": "⏳ Еще 30 минут", "callback_data": f"checkin_postpone_{cid}_30"}],
+                            [{"text": "🌙 На вечер (19:00)", "callback_data": f"checkin_postpone_{cid}_evening"}]
+                        ]
+                    }
+                    send_message(
+                        cuid,
+                        f"🤝 **КОНТРОЛЬ ФОКУСА ОТ АССИСТЕНТА**\n\n"
+                        f"Артём, как продвигается задача:\n"
+                        f"📌 **#{cid} {ctitle}** *(дедлайн был в {due_str} МСК)*?\n\n"
+                        f"Удалось закрыть или нужно дополнительное время?",
+                        reply_markup=checkin_kb
+                    )
+            except Exception as che:
+                print(f"[Reminder Worker] Checkin check error: {che}")
+
+            # 4. Daily Morning MIT Briefing (08:50 - 09:30 MSK)
+            try:
+                now_msk = datetime.datetime.now(MSK)
+                today_str = now_msk.date().isoformat()
+                if now_msk.hour == 9 and 0 <= now_msk.minute <= 30:
+                    flag_key = f"MORNING_BRIEFING_{today_str}"
+                    if not db_get_user_setting(AUTHORIZED_USER_ID, flag_key):
+                        db_set_user_setting(AUTHORIZED_USER_ID, flag_key, "sent")
+                        print(f"[Reminder Worker] Triggering Morning Briefing for {today_str}")
+                        send_morning_briefing(AUTHORIZED_USER_ID, AUTHORIZED_USER_ID)
+            except Exception as me:
+                print(f"[Reminder Worker] Morning briefing error: {me}")
+
+            # 5. Daily Evening Review (21:00 - 21:30 MSK)
+            try:
+                now_msk = datetime.datetime.now(MSK)
+                today_str = now_msk.date().isoformat()
+                if now_msk.hour == 21 and 0 <= now_msk.minute <= 30:
+                    flag_key = f"EVENING_REVIEW_{today_str}"
+                    if not db_get_user_setting(AUTHORIZED_USER_ID, flag_key):
+                        db_set_user_setting(AUTHORIZED_USER_ID, flag_key, "sent")
+                        print(f"[Reminder Worker] Triggering Evening Review for {today_str}")
+                        send_evening_review(AUTHORIZED_USER_ID, AUTHORIZED_USER_ID)
+            except Exception as ee:
+                print(f"[Reminder Worker] Evening review error: {ee}")
+
         except Exception as e:
             print(f"[Reminder Worker] Error: {e}")
 

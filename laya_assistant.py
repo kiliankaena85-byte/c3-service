@@ -66,6 +66,12 @@ class LayaAssistantDecisionEngine:
         # 1. Intent Detection
         if not clean:
             intent = "EMPTY"
+        elif any(w in clean for w in ["утренний фокус", "3 цели", "главные дела", "mit", "3 главных"]):
+            intent = "MORNING_MIT"
+        elif any(w in clean for w in ["фокус", "помодоро", "глубокий фокус", "спринт"]):
+            intent = "FOCUS_SESSION"
+        elif any(w in clean for w in ["итоги дня", "вечерний обзор", "итоги", "дебрифинг"]):
+            intent = "EVENING_REVIEW"
         elif any(re.search(p, clean) for p in cls.SUMMARY_QUERY_PATTERNS) and any(w in clean for w in ["max", "макс", "дай", "покажи", "сводк"]):
             intent = "MAX_SUMMARY"
         elif any(re.search(p, clean) for p in cls.TASKS_LIST_PATTERNS):
